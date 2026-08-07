@@ -1,0 +1,22 @@
+schema_version: 1
+
+# Stable matching is introduced in P1. Values remain null until `ostinato
+# doctor` and a labeled FR-4X capture establish the real host names.
+midi_input:
+  name_contains: null
+  client_id: null
+  port_id: null
+  reconnect_interval_ms: 1000
+
+audio_output:
+  driver: null
+  device: null
+  sample_rate_hz: 48000
+  buffer_size_samples: 128
+  period_count: null
+
+synth:
+  executable: fluidsynth
+  soundfont_path: null
+  polyphony: 128
+
