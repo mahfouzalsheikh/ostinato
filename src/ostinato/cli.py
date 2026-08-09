@@ -6,6 +6,7 @@ import argparse
 from collections.abc import Sequence
 
 from ostinato import __version__
+from ostinato.computer_audio import run_audible_keyboard
 from ostinato.diagnostics import collect_report
 from ostinato.keyboard_input import run_keyboard
 
@@ -43,6 +44,18 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="write one JSON object per input event",
     )
+    keyboard.add_argument(
+        "--play",
+        action="store_true",
+        help="play a built-in accompaniment through the computer audio output",
+    )
+    keyboard.add_argument(
+        "--tempo",
+        type=int,
+        default=120,
+        metavar="BPM",
+        help="audible demo tempo from 40 to 240 BPM (default: 120)",
+    )
     return parser
 
 
@@ -55,5 +68,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(report.to_json() if arguments.json else report.to_text())
         return 0
     if arguments.command == "keyboard":
-        return run_keyboard(keys=arguments.keys, json_output=arguments.json)
+        if arguments.play:
+            return run_audible_keyboard(
+                keys=arguments.keys,
+                json_output=arguments.json,
+                tempo_bpm=arguments.tempo,
+            )
+        return run_keyboard(
+            keys=arguments.keys,
+            json_output=arguments.json,
+            tempo_bpm=arguments.tempo,
+        )
     return 2

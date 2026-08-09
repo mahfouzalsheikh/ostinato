@@ -74,6 +74,26 @@ class KeyboardChordInputTests(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertEqual(controller.handle_key(key).kind, kind)
 
+    def test_tempo_controls_change_speed_in_five_bpm_steps(self) -> None:
+        controller = KeyboardChordInput(tempo_bpm=120)
+
+        slower = controller.handle_key("-")
+        faster = controller.handle_key("+")
+        unshifted_faster = controller.handle_key("=")
+
+        self.assertEqual(slower.kind, KeyboardEventKind.TEMPO)
+        self.assertEqual(slower.tempo_bpm, 115)
+        self.assertEqual(faster.tempo_bpm, 120)
+        self.assertEqual(unshifted_faster.tempo_bpm, 125)
+        self.assertEqual(controller.tempo_bpm, 125)
+
+    def test_tempo_controls_stop_at_safe_demo_limits(self) -> None:
+        minimum = KeyboardChordInput(tempo_bpm=40)
+        maximum = KeyboardChordInput(tempo_bpm=240)
+
+        self.assertEqual(minimum.handle_key("-").tempo_bpm, 40)
+        self.assertEqual(maximum.handle_key("+").tempo_bpm, 240)
+
     def test_scripted_json_mode_is_deterministic_in_structure(self) -> None:
         output = io.StringIO()
 
@@ -99,6 +119,26 @@ class KeyboardChordInputTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 2)
         self.assertIn("--keys", output.getvalue())
+
+    def test_event_handler_receives_each_scripted_event(self) -> None:
+        observed: list[KeyboardEventKind] = []
+
+        exit_code = run_keyboard(
+            keys="zaq",
+            json_output=False,
+            output_stream=io.StringIO(),
+            event_handler=lambda event: observed.append(event.kind),
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            observed,
+            [
+                KeyboardEventKind.QUALITY,
+                KeyboardEventKind.CHORD,
+                KeyboardEventKind.QUIT,
+            ],
+        )
 
 
 if __name__ == "__main__":

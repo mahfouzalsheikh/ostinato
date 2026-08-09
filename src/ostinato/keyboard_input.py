@@ -37,12 +37,17 @@ QUALITY_KEYS: dict[str, ChordQuality] = {
     "v": ChordQuality.DIMINISHED,
 }
 
+MIN_TEMPO_BPM = 40
+MAX_TEMPO_BPM = 240
+TEMPO_STEP_BPM = 5
+
 
 class KeyboardEventKind(StrEnum):
     """Kinds of event emitted by the keyboard simulator."""
 
     CHORD = "chord"
     QUALITY = "quality"
+    TEMPO = "tempo"
     CLEAR = "clear"
     PANIC = "panic"
     HELP = "help"
@@ -58,6 +63,7 @@ class KeyboardEvent:
     key: str
     detail: str
     chord: ChordState | None = None
+    tempo_bpm: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize an event for scripted testing."""
@@ -67,21 +73,36 @@ class KeyboardEvent:
             "key": self.key,
             "detail": self.detail,
             "chord": self.chord.to_dict() if self.chord else None,
+            "tempo_bpm": self.tempo_bpm,
         }
 
 
 class KeyboardChordInput:
     """Stateful mapping from documented keys to normalized chord states."""
 
-    def __init__(self, *, clock: Callable[[], int] = time.monotonic_ns) -> None:
+    def __init__(
+        self,
+        *,
+        clock: Callable[[], int] = time.monotonic_ns,
+        tempo_bpm: int = 120,
+    ) -> None:
+        if not MIN_TEMPO_BPM <= tempo_bpm <= MAX_TEMPO_BPM:
+            raise ValueError(
+                f"tempo_bpm must be between {MIN_TEMPO_BPM} and {MAX_TEMPO_BPM}"
+            )
         self._clock = clock
         self._quality = ChordQuality.MAJOR
         self._root_pitch_class: int | None = None
         self._event_number = 0
+        self._tempo_bpm = tempo_bpm
 
     @property
     def quality(self) -> ChordQuality:
         return self._quality
+
+    @property
+    def tempo_bpm(self) -> int:
+        return self._tempo_bpm
 
     def handle_key(self, key: str) -> KeyboardEvent:
         """Translate one key without reading the terminal or emitting MIDI."""
@@ -104,6 +125,13 @@ class KeyboardChordInput:
                 f"quality set to {self._quality.value}; choose a root",
             )
 
+        if key == "-":
+            self._tempo_bpm = max(MIN_TEMPO_BPM, self._tempo_bpm - TEMPO_STEP_BPM)
+            return self._tempo_event(key)
+        if key in ("+", "="):
+            self._tempo_bpm = min(MAX_TEMPO_BPM, self._tempo_bpm + TEMPO_STEP_BPM)
+            return self._tempo_event(key)
+
         if key == " ":
             self._root_pitch_class = None
             return KeyboardEvent(
@@ -115,7 +143,7 @@ class KeyboardChordInput:
             return KeyboardEvent(
                 KeyboardEventKind.PANIC,
                 normalized,
-                "panic requested; no MIDI sink is attached in this simulator",
+                "panic requested",
             )
         if normalized == "?":
             return KeyboardEvent(KeyboardEventKind.HELP, normalized, "show controls")
@@ -147,14 +175,23 @@ class KeyboardChordInput:
             chord,
         )
 
+    def _tempo_event(self, key: str) -> KeyboardEvent:
+        return KeyboardEvent(
+            KeyboardEventKind.TEMPO,
+            key,
+            f"tempo changed to {self._tempo_bpm} BPM",
+            tempo_bpm=self._tempo_bpm,
+        )
+
 
 def controls_text() -> str:
     """Return the keyboard layout shown in the terminal and documentation."""
 
     roots = "  roots:     a=C w=C# s=D e=Eb d=E f=F t=F# g=G y=Ab h=A u=Bb j=B"
     qualities = "  qualities: z=major x=minor c=dominant-7 v=diminished"
+    tempo = "  tempo:     -=slower +=faster (= also works for +)"
     commands = "  commands:  space=clear p=panic ?=help q=quit"
-    return "\n".join((roots, qualities, commands))
+    return "\n".join((roots, qualities, tempo, commands))
 
 
 def render_event(event: KeyboardEvent, *, json_output: bool) -> str:
@@ -189,22 +226,34 @@ def run_keyboard(
     json_output: bool,
     input_stream: TextIO = sys.stdin,
     output_stream: TextIO = sys.stdout,
+    event_handler: Callable[[KeyboardEvent], None] | None = None,
+    playback_message: str | None = None,
+    tempo_bpm: int = 120,
 ) -> int:
     """Run scripted or interactive computer-keyboard chord input."""
 
-    controller = KeyboardChordInput()
+    controller = KeyboardChordInput(tempo_bpm=tempo_bpm)
     if keys is not None:
-        return _process_keys(iter(keys), controller, json_output, output_stream)
+        return _process_keys(
+            iter(keys), controller, json_output, output_stream, event_handler
+        )
 
     print("Ostinato computer-keyboard chord input", file=output_stream)
     print(controls_text(), file=output_stream)
     print(
-        "This changes chord state only; accompaniment audio is not implemented.",
+        playback_message
+        or "This changes chord state only; use --play for accompaniment audio.",
         file=output_stream,
     )
     try:
         with _terminal_keys(input_stream) as key_iterator:
-            return _process_keys(key_iterator, controller, json_output, output_stream)
+            return _process_keys(
+                key_iterator,
+                controller,
+                json_output,
+                output_stream,
+                event_handler,
+            )
     except RuntimeError as error:
         print(f"ERROR: {error}", file=output_stream)
         print("Use --keys for non-interactive testing.", file=output_stream)
@@ -219,9 +268,12 @@ def _process_keys(
     controller: KeyboardChordInput,
     json_output: bool,
     output_stream: TextIO,
+    event_handler: Callable[[KeyboardEvent], None] | None,
 ) -> int:
     for key in keys:
         event = controller.handle_key(key)
+        if event_handler is not None:
+            event_handler(event)
         if event.kind is KeyboardEventKind.HELP and not json_output:
             print(controls_text(), file=output_stream)
         else:

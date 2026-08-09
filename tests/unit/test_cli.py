@@ -51,7 +51,14 @@ class CliTests(unittest.TestCase):
             exit_code = main(["keyboard", "--keys", "zaq", "--json"])
 
         self.assertEqual(exit_code, 0)
-        run.assert_called_once_with(keys="zaq", json_output=True)
+        run.assert_called_once_with(keys="zaq", json_output=True, tempo_bpm=120)
+
+    def test_keyboard_play_delegates_to_audible_demo(self) -> None:
+        with patch("ostinato.cli.run_audible_keyboard", return_value=0) as run:
+            exit_code = main(["keyboard", "--play", "--tempo", "96"])
+
+        self.assertEqual(exit_code, 0)
+        run.assert_called_once_with(keys=None, json_output=False, tempo_bpm=96)
 
 
 if __name__ == "__main__":

@@ -5,10 +5,10 @@ Roland FR-4X V-Accordion. The accordion's analog audio remains connected
 directly to the mixer; the computer produces accompaniment only.
 
 The repository currently implements milestone **P0** plus a hardware-free
-computer-keyboard chord source: a Python package, development checks, example
-configuration, connection documentation, and a non-mutating host diagnostic
-command. FR-4X MIDI recording and recognition deliberately wait for
-representative hardware captures.
+computer-keyboard chord source and an experimental audible arranger demo. The
+demo turns explicit keyboard chord choices into an original drums, bass, and
+chord pattern through the computer's default audio output. FR-4X MIDI recording
+and recognition deliberately wait for representative hardware captures.
 
 ## Quick start
 
@@ -40,6 +40,16 @@ To exercise chord input without the FR-4X:
 pipenv run ostinato keyboard
 ```
 
+To hear the built-in computer-only arrangement (requires `aplay`):
+
+```bash
+pipenv run ostinato keyboard --play
+pipenv run ostinato keyboard --play --tempo 96
+```
+
+While it is running, use `-` to slow down and `+` (or `=`) to speed up in
+5-BPM steps.
+
 See the [computer-only testing guide](docs/computer-only-testing.md) for the key
 layout and scripted mode.
 
@@ -64,9 +74,11 @@ commit personal device names or an unverified FR-4X mapping as shared defaults.
 
 - Implemented: OST-001 through OST-003 (P0 software slice).
 - Pending hardware: FluidSynth playback/endurance observation and FR-4X capture.
-- Available without hardware: explicit computer-keyboard chord-state input.
-- Intentionally absent: FR-4X chord recognition, arranger scheduling/audio,
-  UI, and Pi services.
+- Available without accordion hardware: explicit computer-keyboard chord-state
+  input and an experimental built-in accompaniment through the default host
+  audio route.
+- Intentionally absent: FR-4X chord recognition, the production style
+  loader/planner/dispatcher and FluidSynth path, UI, and Pi services.
 
 The complete milestone sequence and acceptance criteria are in
 `project-ostinato-codex-execution-plan.md`.

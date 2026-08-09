@@ -13,9 +13,10 @@ accordion voice.
 FR-4X MIDI -> capture/verified mapping --+
                                          |
 computer keyboard -> explicit mapping ---+-> chord state -> planner -> dispatcher -> synth
-                                                              ^              |
-                                                              |              v
-                                                       transport clock  diagnostics
+                                         |       |
+                                         |       +-> built-in audible POC (computer only)
+                                         |
+                                         +------ diagnostics
 ```
 
 All input sources converge on a `ChordState`: root pitch class, quality,
@@ -42,6 +43,11 @@ new continuous epoch/position segment.
 
 ## Current implementation boundary
 
-P0 contains diagnostics and the explicit keyboard chord source. It does not
-open MIDI ports, start audio, schedule accompaniment, or change host settings.
-The keyboard source therefore displays normalized changes but makes no sound.
+P0 contains diagnostics and the explicit keyboard chord source. An experimental
+computer-only vertical slice can also render an original fixed pattern through
+the default host route using `aplay`. Its transport advances by an absolute
+integer audio-frame position, so buffers do not accumulate sleep-based drift.
+
+The demo is not the future validated style loader, tick-based planner,
+dispatcher, FluidSynth path, or FR-4X mapping. It changes no host settings and
+does not claim any accordion or audio-latency evidence.
