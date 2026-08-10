@@ -6,9 +6,9 @@ directly to the mixer; the computer produces accompaniment only.
 
 The repository currently implements milestone **P0** plus a hardware-free
 computer-keyboard chord source and an experimental audible arranger demo. The
-demo turns explicit keyboard chord choices into an original drums, bass, and
-chord pattern through the computer's default audio output. FR-4X MIDI recording
-and recognition deliberately wait for representative hardware captures.
+demo turns explicit keyboard chord choices into an original modern-tango
+pattern through the computer's default audio output. FR-4X MIDI recording and
+recognition deliberately wait for representative hardware captures.
 
 ## Quick start
 
@@ -40,7 +40,7 @@ To exercise chord input without the FR-4X:
 pipenv run ostinato keyboard
 ```
 
-To hear the built-in computer-only arrangement (requires `aplay`):
+To hear the built-in computer-only modern tango (requires `aplay`):
 
 ```bash
 pipenv run ostinato keyboard --play
@@ -48,7 +48,8 @@ pipenv run ostinato keyboard --play --tempo 96
 ```
 
 While it is running, use `-` to slow down and `+` (or `=`) to speed up in
-5-BPM steps.
+5-BPM steps. Press `i` for a four-measure ensemble intro and `o` to arm a
+four-measure ending at the next bar.
 
 See the [computer-only testing guide](docs/computer-only-testing.md) for the key
 layout and scripted mode.

@@ -50,6 +50,8 @@ class KeyboardEventKind(StrEnum):
     TEMPO = "tempo"
     CLEAR = "clear"
     PANIC = "panic"
+    INTRO = "intro"
+    ENDING = "ending"
     HELP = "help"
     QUIT = "quit"
     UNKNOWN = "unknown"
@@ -145,6 +147,18 @@ class KeyboardChordInput:
                 normalized,
                 "panic requested",
             )
+        if normalized == "i":
+            return KeyboardEvent(
+                KeyboardEventKind.INTRO,
+                normalized,
+                "four-measure ensemble intro requested",
+            )
+        if normalized == "o":
+            return KeyboardEvent(
+                KeyboardEventKind.ENDING,
+                normalized,
+                "four-measure ensemble ending armed for the next bar",
+            )
         if normalized == "?":
             return KeyboardEvent(KeyboardEventKind.HELP, normalized, "show controls")
         if normalized == "q":
@@ -190,8 +204,9 @@ def controls_text() -> str:
     roots = "  roots:     a=C w=C# s=D e=Eb d=E f=F t=F# g=G y=Ab h=A u=Bb j=B"
     qualities = "  qualities: z=major x=minor c=dominant-7 v=diminished"
     tempo = "  tempo:     -=slower +=faster (= also works for +)"
+    sections = "  sections:  i=four-bar intro o=four-bar ending"
     commands = "  commands:  space=clear p=panic ?=help q=quit"
-    return "\n".join((roots, qualities, tempo, commands))
+    return "\n".join((roots, qualities, tempo, sections, commands))
 
 
 def render_event(event: KeyboardEvent, *, json_output: bool) -> str:

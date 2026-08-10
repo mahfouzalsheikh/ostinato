@@ -44,9 +44,19 @@ new continuous epoch/position segment.
 ## Current implementation boundary
 
 P0 contains diagnostics and the explicit keyboard chord source. An experimental
-computer-only vertical slice can also render an original fixed pattern through
-the default host route using `aplay`. Its transport advances by an absolute
-integer audio-frame position, so buffers do not accumulate sleep-based drift.
+computer-only vertical slice can also render an original modern-tango pattern
+through the default host route using `aplay`. The 4/4 bar is grouped as
+1.5+1.5+1 beats and orchestrated across procedural bass, piano, reed, drums,
+auxiliary percussion, and backing strings. Its transport advances by an
+absolute integer audio-frame position, so buffers do not accumulate sleep-based
+drift. Its POC-only section state supports an immediate four-measure intro and
+a four-measure ending quantized to the next bar; the ending enters a stopped
+state after its final accent.
+
+This audible harness writes mastered raw PCM directly to `aplay`. It creates no
+MIDI output messages and therefore has no instrument or percussion channels.
+Its noise-shaped procedural drum voices are separate from the later FluidSynth
+and SoundFont output design.
 
 The demo is not the future validated style loader, tick-based planner,
 dispatcher, FluidSynth path, or FR-4X mapping. It changes no host settings and

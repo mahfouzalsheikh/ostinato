@@ -47,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     keyboard.add_argument(
         "--play",
         action="store_true",
-        help="play a built-in accompaniment through the computer audio output",
+        help="play the built-in modern tango through the computer audio output",
     )
     keyboard.add_argument(
         "--tempo",

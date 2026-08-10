@@ -65,6 +65,8 @@ class KeyboardChordInputTests(unittest.TestCase):
         expected = {
             " ": KeyboardEventKind.CLEAR,
             "p": KeyboardEventKind.PANIC,
+            "i": KeyboardEventKind.INTRO,
+            "o": KeyboardEventKind.ENDING,
             "?": KeyboardEventKind.HELP,
             "q": KeyboardEventKind.QUIT,
             "!": KeyboardEventKind.UNKNOWN,
@@ -73,6 +75,16 @@ class KeyboardChordInputTests(unittest.TestCase):
         for key, kind in expected.items():
             with self.subTest(key=key):
                 self.assertEqual(controller.handle_key(key).kind, kind)
+
+    def test_section_controls_describe_their_quantization(self) -> None:
+        controller = KeyboardChordInput()
+
+        intro = controller.handle_key("i")
+        ending = controller.handle_key("o")
+
+        self.assertIn("four-measure", intro.detail)
+        self.assertIn("ensemble intro", intro.detail)
+        self.assertIn("next bar", ending.detail)
 
     def test_tempo_controls_change_speed_in_five_bpm_steps(self) -> None:
         controller = KeyboardChordInput(tempo_bpm=120)
