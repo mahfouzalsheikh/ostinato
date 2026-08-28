@@ -266,6 +266,33 @@ class MidiService:
         self._publish(snapshot)
         return snapshot
 
+    def restore_ports(
+        self,
+        *,
+        input_name: str | None,
+        output_name: str | None,
+    ) -> JsonObject:
+        """Restore previously validated exact names, even while disconnected.
+
+        Unlike an interactive selection, a persisted name may legitimately be
+        absent during startup. Keeping that exact request lets the monitor open
+        it if the same port returns without ever choosing a substitute.
+        """
+
+        self._close_input()
+        self._close_output()
+        self._input_name = input_name
+        self._output_name = output_name
+        try:
+            inputs = self._backend.input_names()
+            outputs = self._backend.output_names()
+            self._open_selected_ports(inputs=inputs, outputs=outputs)
+        except Exception as error:
+            self._error = f"MIDI restore failed: {error}"
+        snapshot = self.snapshot()
+        self._publish(snapshot)
+        return snapshot
+
     def send(
         self,
         values: Sequence[object],

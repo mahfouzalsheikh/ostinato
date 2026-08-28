@@ -21,54 +21,66 @@ Open <http://127.0.0.1:8765>. The host command binds only to loopback unless an
 explicit `--host` value is supplied. For the Docker workflow, see
 [docker.md](docker.md).
 
-## Connect MIDI
+## Connect and detect MIDI
 
-1. Open **Input from accordion** and select an exact name reported by ALSA/RtMidi.
-2. Optionally select **Output from simulator**. This is the port that receives
-   browser key and button presses; do not select a destination you do not
-   intend to control.
-3. Choose **Apply connections**. The service remembers a requested port during
-   a disconnect and tries to reopen that exact name if it returns.
-4. Watch the raw event stream before assigning musical meaning.
+Choose **Set up MIDI** to open the three-step setup wizard:
 
-No port is selected automatically. A port disappearing or failing is reported
-in the interface and does not silently switch to another device.
+1. Select an exact ALSA/RtMidi input name and, optionally, an output for the
+   browser simulator.
+2. Start and stop capture while playing only the requested physical role:
+   right-hand treble, left-hand bass buttons, then left-hand chord buttons.
+3. Review the ranked observed channels. A channel that appeared in multiple
+   phases has lower confidence and remains editable before saving.
 
-## Map the 37-key piano surface
+The detector does not contain FR-4X channel defaults. The labels come from the
+guided performance and the candidates come only from received note-on events.
+It detects channel activity and observed note ranges; it does not infer chord
+encodings or the physical position of individual left-hand buttons.
 
-The visual keyboard needs two observed values:
+Saving writes a versioned profile on the service. On later starts, Ostinato
+reconnects only when those exact saved port names are available. A missing port
+is reported and never replaced with a different device automatically. The
+input can still reconnect when an optional saved output is absent. Run the
+wizard again after changing the instrument's MIDI transmission setup.
 
-- the one-based MIDI input channel carrying the right-hand piano events;
-- the MIDI note number produced by the physical leftmost key in the current
-  instrument setup.
+## Visualize the 37-key piano surface
 
-The browser stores these values in local storage. Incoming note-on/note-off
-events in the resulting 37-note range animate the piano keys. To use the
-surface as a controller, also select a simulator output channel. The leftmost
-note and output channel determine the raw messages sent by pointer presses.
+The saved treble channel and observed note set drive the piano directly; there
+is no separate mapping form. The visual keyboard has the physical 37-key F-to-F
+pitch-class shape. Ostinato selects an F-aligned 37-note MIDI window containing
+the observed treble notes and centers incomplete samples within that window.
+This prevents an arbitrary lowest sampled note from shifting every displayed
+pitch. Playing the physical lowest and highest keys during setup removes octave
+ambiguity.
 
-These settings are user observations, not shared project defaults. Register,
-transpose, orchestration, or instrument-setting changes can invalidate them.
+Browser piano presses send the corresponding inferred MIDI note on the observed
+treble channel through the selected output. A fixed velocity is used for this
+provisional simulator.
 
-## Train the 120-button surface
+## Visualize the 120-button Stradella surface
 
-The FR-4X offers several left-hand layouts, so the initial UI uses neutral row
-and column positions rather than naming chord or bass semantics.
+The left surface implements the FR-4X **2 Bass Rows** table: counterbass,
+fundamental bass, major, minor, dominant seventh, and diminished rows across 20
+circle-of-fifths columns. It is not a free-bass projection. The exact displayed
+labels and order follow Roland's reference-manual table.
 
-1. Choose **Learn**.
-2. Click one visual button.
-3. Press the intended physical button once.
-4. The next incoming note-on signature (channel and note) becomes that visual
-   button's browser-local binding.
+Incoming notes on the detected bass channel illuminate the central occurrence
+of both possible Stradella bass-row buttons. When a recognized chord is active, a
+bass note a major third above its root is shown in that chord column's
+counterbass row. The FR-4X transmits pitch, not a unique physical button ID, so
+a standalone pitch that exists as both a fundamental and counterbass remains
+inherently ambiguous; the interface marks both candidates instead of claiming
+that one physical switch was observed.
 
-Learned buttons animate on matching note events and send the learned signature
-through the selected output when clicked. **Clear bindings** removes all such
-browser-local data.
+Incoming chord-channel notes are grouped over a short 12 ms window and matched
+as major, minor, dominant-seventh, or diminished note sets. The documented
+single-note **D-Mode** codes are supported as well. A recognized chord lights
+one root/quality button. Browser presses replay only exact bass notes or chord
+clusters that have already been observed during the current page session.
 
-This single-event learner is a visualization aid, not the production chord
-mapper. A physical chord button may produce clusters, controls, mode-dependent
-messages, or overlapping events. H1 recordings are still required before
-those events can be assigned stable musical meaning.
+This milestone targets the standard two-bass-row Stradella mode. The FR-4X also
+offers several three-bass-row Stradella variants; those require an explicit
+layout choice before their different row geometry can be displayed safely.
 
 ## Real-time and safety boundary
 
@@ -93,6 +105,10 @@ those events can be assigned stable musical meaning.
 | `GET /api/midi/status` | Available and selected ports |
 | `PUT /api/midi/ports` | Select exact input/output names or disconnect |
 | `POST /api/midi/send` | Send one validated raw MIDI message |
+| `POST /api/midi/detect` | Rank channels from three labeled note captures |
+| `GET /api/midi/profile` | Load the saved, versioned detection profile |
+| `PUT /api/midi/profile` | Validate and atomically save a reviewed profile |
+| `DELETE /api/midi/profile` | Remove the saved profile |
 | `WS /ws/midi` | Status, input/output events, and real-time commands |
 
 The API is intentionally local and unauthenticated in this milestone.

@@ -7,12 +7,17 @@ services:
     # cgroup rules below still limit device access to ALSA and USB character
     # devices; the container is not privileged.
     user: "0:0"
+    environment:
+      OSTINATO_STATE_DIRECTORY: /var/lib/ostinato
     devices:
       - /dev/snd:/dev/snd
     volumes:
       - type: bind
         source: /dev/bus/usb
         target: /dev/bus/usb
+      - type: volume
+        source: ostinato-state
+        target: /var/lib/ostinato
     device_cgroup_rules:
       - "c 116:* rwm" # ALSA
       - "c 189:* rwm" # USB device filesystem
@@ -35,3 +40,6 @@ services:
     stdin_open: true
     tty: true
     command: ["web", "--host", "0.0.0.0", "--port", "8000"]
+
+volumes:
+  ostinato-state:

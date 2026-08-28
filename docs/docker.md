@@ -33,6 +33,9 @@ OSTINATO_WEB_BIND=0.0.0.0 docker compose up --build --detach
 
 Stop the service with `docker compose down`. See
 [web-interface.md](web-interface.md) for port selection and mapping behavior.
+The guided MIDI profile is stored in the Compose-managed `ostinato-state`
+volume and survives normal container replacement and `docker compose down`.
+Running `docker compose down --volumes` also deletes that saved profile.
 
 ## Diagnose and run one-off commands
 

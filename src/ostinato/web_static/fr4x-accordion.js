@@ -1,6 +1,19 @@
-const PIANO_KEY_COUNT = 37;
-const BASS_ROW_COUNT = 6;
-const BASS_COLUMN_COUNT = 20;
+import {
+  PIANO_FIRST_PITCH_CLASS,
+  PIANO_KEY_COUNT,
+  inferPianoBase,
+} from "./midi-surface.js";
+import {
+  STRADELLA_COLUMN_COUNT,
+  STRADELLA_ROW_COUNT,
+  centralStradellaColumn,
+  classifyChordNotes,
+  stradellaBassButtonsForPitch,
+  stradellaCell,
+} from "./stradella.js";
+
+const BASS_ROW_COUNT = STRADELLA_ROW_COUNT;
+const BASS_COLUMN_COUNT = STRADELLA_COLUMN_COUNT;
 const BLACK_PITCH_CLASSES = new Set([1, 3, 6, 8, 10]);
 
 const template = document.createElement("template");
@@ -121,87 +134,36 @@ template.innerHTML = `
       border: 1px solid #bbc0b9;
       border-radius: 50%;
       cursor: pointer;
+      color: #242827;
+      font: 700 6px/1 system-ui, sans-serif;
+      letter-spacing: -.03em;
       background: radial-gradient(circle at 32% 28%, #fff, #aaa 55%, #363a39);
       box-shadow: 0 3px 5px #000, inset 0 1px rgba(255,255,255,.65);
       transition: transform 60ms ease, box-shadow 60ms ease, background 60ms ease;
     }
 
-    .bass-button.bound { border-color: #65f6d1; }
-    .bass-button.selected {
-      outline: 2px solid #ffb758;
-      outline-offset: 2px;
-    }
+    .bass-button.counterbass,
+    .bass-button.bass { border-color: rgba(101, 246, 209, .55); }
+    .bass-button.major,
+    .bass-button.minor,
+    .bass-button.seventh,
+    .bass-button.diminished { border-color: rgba(255, 183, 88, .55); }
     .bass-button.active-in {
       background: var(--active-in);
       box-shadow: 0 0 11px var(--active-in);
       transform: scale(.82);
+    }
+    .bass-button.possible-in {
+      border-color: var(--active-in);
+      background: radial-gradient(circle at 32% 28%, #eafff9, #79ab9f 58%, #273d38);
+      box-shadow: 0 0 0 2px rgba(101, 246, 209, .28), 0 0 12px rgba(101, 246, 209, .55);
+      transform: scale(.92);
     }
     .bass-button.active-out {
       background: var(--active-out);
       box-shadow: 0 0 11px var(--active-out);
       transform: scale(.82);
     }
-
-    .bellows {
-      position: relative;
-      display: flex;
-      gap: clamp(8px, 1vw, 18px);
-      align-items: stretch;
-      justify-content: center;
-      min-height: 285px;
-      padding: 24px 42px;
-      overflow: hidden;
-      background: linear-gradient(90deg, #111 0, #252525 4%, #0a0a0a 50%, #242424 96%, #0d0d0d);
-    }
-
-    .bellows::before,
-    .bellows::after {
-      position: absolute;
-      inset: 0 auto 0;
-      z-index: 2;
-      width: 34px;
-      content: "";
-      background: linear-gradient(90deg, #151818, #6a706e, #111);
-    }
-    .bellows::before { left: 0; }
-    .bellows::after { right: 0; transform: scaleX(-1); }
-
-    .fold {
-      flex: 1;
-      max-width: 52px;
-      border-right: 2px solid #a9a99e;
-      border-left: 2px solid #050505;
-      background: linear-gradient(90deg, #080808, #272727 48%, #0a0a0a 52%);
-      box-shadow: 2px 0 4px #000;
-    }
-
-    .bellows-badge {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      z-index: 4;
-      display: grid;
-      min-width: 168px;
-      min-height: 60px;
-      place-items: center;
-      border: 1px solid rgba(255,255,255,.17);
-      border-radius: 8px;
-      color: #e7edeb;
-      font: 600 18px/1 Georgia, serif;
-      letter-spacing: .12em;
-      background: rgba(3,5,5,.9);
-      box-shadow: 0 12px 30px rgba(0,0,0,.8);
-      transform: translate(-50%, -50%);
-    }
-
-    .bellows-badge i {
-      width: 6px;
-      height: 6px;
-      margin-right: 8px;
-      border-radius: 50%;
-      background: #596361;
-    }
-    .bellows-badge.live i { background: var(--active-in); box-shadow: 0 0 9px var(--active-in); }
 
     .control-deck {
       position: relative;
@@ -322,11 +284,8 @@ template.innerHTML = `
       </div>
       <div class="piano"></div>
     </section>
-    <section class="bellows" aria-label="Bellows visualization">
-      <div class="bellows-badge"><span><i></i>OSTINATO</span></div>
-    </section>
     <section class="end left-end" aria-label="120-button left-hand keyboard">
-      <div class="hand-label"><span>Left hand</span><span>120-button field</span></div>
+      <div class="hand-label"><span>Left hand</span><span class="left-mode">Stradella · 2 bass rows</span></div>
       <div class="registers" aria-hidden="true"></div>
       <div class="bass-grid"></div>
     </section>
@@ -338,9 +297,17 @@ export class Fr4xAccordion extends HTMLElement {
     super();
     this.attachShadow({ mode: "open" });
     this.shadowRoot.append(template.content.cloneNode(true));
-    this.bindings = {};
-    this.learning = false;
-    this.selectedButton = null;
+    this.pianoBase = null;
+    this.trebleChannel = null;
+    this.bassChannel = null;
+    this.chordChannel = null;
+    this.leftByButton = new Map();
+    this.activeBassNotes = new Set();
+    this.activeBassButtons = new Map();
+    this.activeChordNotes = new Set();
+    this.activeChordButton = null;
+    this.activeChordRoot = null;
+    this.chordUpdateTimer = null;
     this.activeInput = new Set();
     this.activeOutput = new Set();
   }
@@ -354,16 +321,12 @@ export class Fr4xAccordion extends HTMLElement {
   #buildDecorativeControls() {
     const registers = this.shadowRoot.querySelector(".registers");
     const deck = this.shadowRoot.querySelector(".deck-controls");
-    const bellows = this.shadowRoot.querySelector(".bellows");
     if (!registers.childElementCount) {
       for (let index = 0; index < 7; index += 1) {
         registers.append(Object.assign(document.createElement("span"), { className: "register" }));
       }
       for (let index = 0; index < 8; index += 1) {
         deck.append(Object.assign(document.createElement("span"), { className: "deck-control" }));
-      }
-      for (let index = 0; index < 15; index += 1) {
-        bellows.append(Object.assign(document.createElement("span"), { className: "fold" }));
       }
     }
   }
@@ -374,7 +337,7 @@ export class Fr4xAccordion extends HTMLElement {
     // The visual starts on F to reproduce the 22-white/15-black physical
     // pattern visible on the 37-key instrument. It assigns no MIDI note.
     for (let index = 0; index < PIANO_KEY_COUNT; index += 1) {
-      const pitchClass = (5 + index) % 12;
+      const pitchClass = (PIANO_FIRST_PITCH_CLASS + index) % 12;
       const black = BLACK_PITCH_CLASSES.has(pitchClass);
       const key = document.createElement("button");
       key.type = "button";
@@ -385,7 +348,12 @@ export class Fr4xAccordion extends HTMLElement {
         this.#setPianoState(index, active, "out");
         this.dispatchEvent(new CustomEvent("surface-note", {
           bubbles: true,
-          detail: { index, active },
+          detail: {
+            index,
+            active,
+            channel: this.trebleChannel,
+            note: this.pianoBase == null ? null : this.pianoBase + index,
+          },
         }));
       });
       piano.append(key);
@@ -400,9 +368,17 @@ export class Fr4xAccordion extends HTMLElement {
         const id = `r${row + 1}c${column + 1}`;
         const button = document.createElement("button");
         button.type = "button";
-        button.className = "bass-button";
+        const cell = stradellaCell(row, column);
+        button.className = `bass-button ${cell.role}`;
         button.dataset.id = id;
-        button.setAttribute("aria-label", `Left-hand button row ${row + 1}, column ${column + 1}`);
+        button.dataset.row = String(row);
+        button.dataset.column = String(column);
+        button.dataset.rootPitchClass = String(cell.rootPitchClass);
+        button.textContent = cell.label;
+        button.setAttribute(
+          "aria-label",
+          `${cell.label}, ${cell.role}, Stradella column ${column + 1}`,
+        );
         this.#wireMomentaryControl(button, (active) => this.#handleBassPointer(id, active));
         grid.append(button);
       }
@@ -426,69 +402,153 @@ export class Fr4xAccordion extends HTMLElement {
   }
 
   #handleBassPointer(id, active) {
-    if (this.learning) {
-      if (active) {
-        this.#selectButton(id);
-        this.dispatchEvent(new CustomEvent("learn-target", { bubbles: true, detail: { id } }));
-      }
-      return;
-    }
-    const binding = Object.entries(this.bindings).find(([, buttonId]) => buttonId === id)?.[0];
+    const binding = this.leftByButton.get(id);
     if (!binding) {
-      if (active) this.dispatchEvent(new CustomEvent("unmapped-button", { bubbles: true, detail: { id } }));
+      if (active) this.dispatchEvent(new CustomEvent("unmapped-button", {
+        bubbles: true,
+        detail: { id },
+      }));
       return;
     }
-    const [channel, note] = binding.split(":").map(Number);
     this.#setBassState(id, active, "out");
-    this.dispatchEvent(new CustomEvent("surface-bass", {
+    this.dispatchEvent(new CustomEvent("surface-left", {
       bubbles: true,
-      detail: { id, channel, note, active },
+      detail: { id, channel: binding.channel, notes: binding.notes, active },
     }));
   }
 
-  #selectButton(id) {
-    this.selectedButton = id;
-    this.shadowRoot.querySelectorAll(".bass-button").forEach((button) => {
-      button.classList.toggle("selected", button.dataset.id === id);
+  configureMidi(profile) {
+    this.activeInput.clear();
+    this.activeOutput.clear();
+    this.shadowRoot.querySelectorAll(".active-in, .possible-in, .active-out").forEach((control) => {
+      control.classList.remove("active-in", "possible-in", "active-out");
     });
+    this.trebleChannel = profile?.roles?.treble?.primary_channel ?? null;
+    this.bassChannel = profile?.roles?.bass?.primary_channel ?? null;
+    this.chordChannel = profile?.roles?.chord?.primary_channel ?? null;
+    const treble = profile?.roles?.treble;
+    const trebleCandidate = treble?.candidates?.find(
+      (candidate) => candidate.channel === this.trebleChannel,
+    );
+    this.pianoBase = inferPianoBase(trebleCandidate?.notes ?? []);
+    this.leftByButton.clear();
+    this.activeBassNotes.clear();
+    this.activeBassButtons.clear();
+    this.activeChordNotes.clear();
+    this.activeChordButton = null;
+    this.activeChordRoot = null;
+    clearTimeout(this.chordUpdateTimer);
+    this.#updateBassStatus();
   }
 
-  setLearning(value) {
-    this.learning = Boolean(value);
-    if (!this.learning) this.#selectButton(null);
-  }
-
-  setBindings(bindings) {
-    this.bindings = { ...bindings };
-    this.shadowRoot.querySelectorAll(".bass-button").forEach((button) => {
-      button.classList.toggle("bound", Object.values(this.bindings).includes(button.dataset.id));
-    });
-  }
-
-  learnFromEvent(event) {
-    if (!this.learning || !this.selectedButton || !this.#isNoteOn(event)) return null;
-    const signature = `${event.channel}:${event.note}`;
-    for (const [key, value] of Object.entries(this.bindings)) {
-      if (value === this.selectedButton || key === signature) delete this.bindings[key];
-    }
-    this.bindings[signature] = this.selectedButton;
-    const learned = { signature, id: this.selectedButton };
-    this.setBindings(this.bindings);
-    this.#selectButton(null);
-    return learned;
-  }
-
-  applyMidi(event, mapping) {
+  applyMidi(event) {
     if (event.type !== "midi" || event.direction !== "in" || event.note == null) return;
     const active = this.#isNoteOn(event);
-    if (mapping.inputChannel != null && mapping.baseNote != null && event.channel === mapping.inputChannel) {
-      const index = event.note - mapping.baseNote;
+    if (this.trebleChannel != null && this.pianoBase != null && event.channel === this.trebleChannel) {
+      const index = event.note - this.pianoBase;
       if (index >= 0 && index < PIANO_KEY_COUNT) this.#setPianoState(index, active, "in");
     }
-    const id = this.bindings[`${event.channel}:${event.note}`];
-    if (id) this.#setBassState(id, active, "in");
-    const badge = this.shadowRoot.querySelector(".bellows-badge");
-    badge.classList.toggle("live", this.activeInput.size > 0);
+    if (event.channel === this.bassChannel) this.#applyBassEvent(event.note, active);
+    if (event.channel === this.chordChannel) this.#applyChordEvent(event.note, active);
+  }
+
+  #applyBassEvent(note, active) {
+    if (active) {
+      this.activeBassNotes.add(note);
+    } else {
+      this.activeBassNotes.delete(note);
+    }
+    this.#refreshBassButtons();
+  }
+
+  #applyChordEvent(note, active) {
+    if (active) this.activeChordNotes.add(note);
+    else this.activeChordNotes.delete(note);
+    clearTimeout(this.chordUpdateTimer);
+    if (!this.activeChordNotes.size) {
+      this.#clearActiveChord();
+      return;
+    }
+    if (active) {
+      this.chordUpdateTimer = setTimeout(() => this.#updateChordState(), 12);
+    }
+  }
+
+  #updateChordState() {
+    const bassNote = [...this.activeBassNotes].at(-1);
+    const chord = classifyChordNotes(
+      [...this.activeChordNotes],
+      bassNote == null ? null : bassNote % 12,
+    );
+    if (!chord) return;
+    const rowByQuality = { major: 3, minor: 4, seventh: 5, diminished: 6 };
+    const column = centralStradellaColumn(chord.rootPitchClass);
+    if (column == null) return;
+    const id = `r${rowByQuality[chord.quality]}c${column + 1}`;
+    if (this.activeChordButton && this.activeChordButton !== id) {
+      this.#setBassState(this.activeChordButton, false, "in");
+    }
+    this.activeChordButton = id;
+    this.activeChordRoot = chord.rootPitchClass;
+    this.leftByButton.set(id, {
+      channel: this.chordChannel,
+      notes: [...this.activeChordNotes].sort((left, right) => left - right),
+    });
+    this.#setBassState(id, true, "in");
+    this.#refreshBassButtons();
+  }
+
+  #clearActiveChord() {
+    if (this.activeChordButton) {
+      this.#setBassState(this.activeChordButton, false, "in");
+      this.activeChordButton = null;
+    }
+    this.activeChordRoot = null;
+    this.#refreshBassButtons();
+  }
+
+  #bassButtonsFor(note) {
+    return stradellaBassButtonsForPitch(note % 12, this.activeChordRoot);
+  }
+
+  #refreshBassButtons() {
+    for (const ids of this.activeBassButtons.values()) {
+      for (const id of ids) this.#setBassInputState(id, false, false);
+    }
+    this.activeBassButtons.clear();
+    for (const note of this.activeBassNotes) {
+      const ids = this.#bassButtonsFor(note);
+      if (!ids.length) continue;
+      const ambiguous = ids.length > 1;
+      this.activeBassButtons.set(note, ids);
+      for (const id of ids) {
+        this.leftByButton.set(id, { channel: this.bassChannel, notes: [note] });
+        this.#setBassInputState(id, true, ambiguous);
+      }
+    }
+    this.#updateBassStatus();
+  }
+
+  #setBassInputState(id, active, possible) {
+    const button = this.shadowRoot.querySelector(`.bass-button[data-id="${id}"]`);
+    if (!button) return;
+    button.classList.remove("active-in", "possible-in");
+    if (active) button.classList.add(possible ? "possible-in" : "active-in");
+    const signature = `b:${id}`;
+    if (active) this.activeInput.add(signature); else this.activeInput.delete(signature);
+  }
+
+  #updateBassStatus() {
+    const label = this.shadowRoot.querySelector(".left-mode");
+    if (!label) return;
+    const ambiguous = [...this.activeBassButtons.values()].some((ids) => ids.length > 1);
+    if (ambiguous) {
+      label.textContent = "Bass row ambiguous · both candidates shown";
+    } else if (this.activeBassNotes.size) {
+      label.textContent = "Bass row resolved by chord context";
+    } else {
+      label.textContent = "Stradella · 2 bass rows";
+    }
   }
 
   #isNoteOn(event) {

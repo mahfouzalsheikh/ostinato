@@ -5,17 +5,26 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, Literal
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, StrictInt
+from pydantic import BaseModel, Field, StrictInt, model_validator
 
+from ostinato.midi_detection import (
+    MIDI_ROLES,
+    MidiDetectionError,
+    NoteObservation,
+    detect_midi_roles,
+)
+from ostinato.midi_profile import MidiProfileStore, MidiProfileStoreError
 from ostinato.realtime_midi import MidiService, MidiServiceError
 
 STATIC_DIRECTORY = Path(__file__).with_name("web_static")
+MidiNote = Annotated[int, Field(ge=0, le=127)]
 
 
 class PortSelection(BaseModel):
@@ -31,13 +40,106 @@ class MidiPayload(BaseModel):
     bytes: list[StrictInt] = Field(min_length=1, max_length=1024)
 
 
-def create_app(service: MidiService | None = None) -> FastAPI:
+class ChannelActivity(BaseModel):
+    """Observed note activity for one channel during one guided phase."""
+
+    channel: int = Field(ge=1, le=16)
+    event_count: int = Field(ge=1)
+    notes: list[MidiNote] = Field(min_length=1, max_length=128)
+    confidence: float = Field(ge=0, le=1)
+
+
+class RoleDetection(BaseModel):
+    """Detected candidates and the reviewed primary channel for one role."""
+
+    primary_channel: int = Field(ge=1, le=16)
+    candidates: list[ChannelActivity] = Field(min_length=1, max_length=16)
+    note_min: int = Field(ge=0, le=127)
+    note_max: int = Field(ge=0, le=127)
+    event_count: int = Field(ge=1)
+    confidence: float = Field(ge=0, le=1)
+
+    @model_validator(mode="after")
+    def validate_selected_candidate(self) -> RoleDetection:
+        """Keep reviewed summary fields tied to an observed candidate."""
+
+        channels = [candidate.channel for candidate in self.candidates]
+        if len(set(channels)) != len(channels):
+            raise ValueError("candidate channels must be unique")
+        selected = next(
+            (
+                candidate
+                for candidate in self.candidates
+                if candidate.channel == self.primary_channel
+            ),
+            None,
+        )
+        if selected is None:
+            raise ValueError("primary channel must be one of the observed candidates")
+        if self.note_min != min(selected.notes) or self.note_max != max(selected.notes):
+            raise ValueError("note range must match the selected candidate")
+        if self.event_count != selected.event_count:
+            raise ValueError("event count must match the selected candidate")
+        if self.confidence != selected.confidence:
+            raise ValueError("confidence must match the selected candidate")
+        return self
+
+
+class DetectedRoles(BaseModel):
+    """The three physical roles labeled by the guided performance."""
+
+    treble: RoleDetection
+    bass: RoleDetection
+    chord: RoleDetection
+
+
+class MidiProfilePayload(BaseModel):
+    """Versioned guided profile accepted from the local setup wizard."""
+
+    schema_version: Literal[1] = 1
+    detection_method: Literal["guided-activity-v1"] = "guided-activity-v1"
+    input_port: str = Field(min_length=1, max_length=512)
+    output_port: str | None = Field(default=None, min_length=1, max_length=512)
+    roles: DetectedRoles
+
+
+class CapturedNote(BaseModel):
+    """One guided note-on sent to the detector."""
+
+    channel: int = Field(ge=1, le=16)
+    note: int = Field(ge=0, le=127)
+
+
+class GuidedCaptures(BaseModel):
+    """User-labeled note-on observations for all physical roles."""
+
+    treble: list[CapturedNote] = Field(min_length=1, max_length=4096)
+    bass: list[CapturedNote] = Field(min_length=1, max_length=4096)
+    chord: list[CapturedNote] = Field(min_length=1, max_length=4096)
+
+
+def create_app(
+    service: MidiService | None = None,
+    profile_store: MidiProfileStore | None = None,
+) -> FastAPI:
     """Create an application with an injectable, hardware-free MIDI service."""
 
     midi = service or MidiService()
+    profiles = profile_store or MidiProfileStore()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        try:
+            profile = profiles.load()
+        except MidiProfileStoreError:
+            profile = None
+        if profile is not None:
+            input_name = profile.get("input_port")
+            output_name = profile.get("output_port")
+            if isinstance(input_name, str) and (
+                output_name is None or isinstance(output_name, str)
+            ):
+                midi.restore_ports(input_name=input_name, output_name=output_name)
         await midi.start()
         try:
             yield
@@ -50,6 +152,7 @@ def create_app(service: MidiService | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     app.state.midi = midi
+    app.state.profile_store = profiles
     app.mount("/assets", StaticFiles(directory=STATIC_DIRECTORY), name="assets")
 
     @app.get("/", include_in_schema=False)
@@ -80,6 +183,43 @@ def create_app(service: MidiService | None = None) -> FastAPI:
             return midi.send(payload.bytes)
         except MidiServiceError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.post("/api/midi/detect")
+    async def detect_channels(captures: GuidedCaptures) -> dict[str, object]:
+        observations = {
+            role: tuple(
+                NoteObservation(channel=item.channel, note=item.note)
+                for item in getattr(captures, role)
+            )
+            for role in MIDI_ROLES
+        }
+        try:
+            return {"roles": detect_midi_roles(observations)}
+        except MidiDetectionError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.get("/api/midi/profile")
+    async def load_profile() -> dict[str, object] | None:
+        try:
+            return profiles.load()
+        except MidiProfileStoreError as error:
+            raise HTTPException(status_code=500, detail=str(error)) from error
+
+    @app.put("/api/midi/profile")
+    async def save_profile(profile: MidiProfilePayload) -> dict[str, object]:
+        value = profile.model_dump(mode="json")
+        value["saved_at"] = datetime.now(UTC).isoformat()
+        try:
+            return profiles.save(value)
+        except MidiProfileStoreError as error:
+            raise HTTPException(status_code=500, detail=str(error)) from error
+
+    @app.delete("/api/midi/profile", status_code=204)
+    async def clear_profile() -> None:
+        try:
+            profiles.clear()
+        except MidiProfileStoreError as error:
+            raise HTTPException(status_code=500, detail=str(error)) from error
 
     @app.websocket("/ws/midi")
     async def midi_socket(websocket: WebSocket) -> None:

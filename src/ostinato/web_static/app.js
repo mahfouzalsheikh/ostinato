@@ -8,85 +8,47 @@ const rateOutput = $("#event-rate");
 const messageOutput = $("#connection-message");
 const inputSelect = $("#midi-input");
 const outputSelect = $("#midi-output");
-const trebleInput = $("#treble-input-channel");
-const trebleOutput = $("#treble-output-channel");
-const trebleBase = $("#treble-base-note");
-const velocity = $("#simulator-velocity");
-const velocityValue = $("#velocity-value");
-const mappingState = $("#mapping-state");
-const bindingCount = $("#binding-count");
-const learnButton = $("#learn-left");
-const learnMessage = $("#learn-message");
 const eventList = $("#event-list");
 const readout = $("#transport-readout");
+const wizard = $("#midi-wizard");
 
-const STORAGE_MAPPING = "ostinato.web.mapping.v1";
-const STORAGE_BINDINGS = "ostinato.web.left-bindings.v1";
 const MAX_EVENTS = 60;
+const SIMULATOR_VELOCITY = 96;
+const ROLE_ORDER = ["treble", "bass", "chord"];
+const ROLE_COPY = {
+  treble: {
+    kicker: "Right keyboard · treble",
+    title: "Play several right-hand piano keys",
+    instructions: "Play the physical lowest and highest keys, plus several keys in between.",
+    next: "Next: bass buttons",
+  },
+  bass: {
+    kicker: "Left keyboard · bass",
+    title: "Play several single bass buttons",
+    instructions: "Use bass/root buttons only. Avoid chord buttons during this capture.",
+    next: "Next: chord buttons",
+  },
+  chord: {
+    kicker: "Left keyboard · chords",
+    title: "Play several chord buttons",
+    instructions: "Use a varied group of chord buttons. Ostinato records activity, not chord meaning.",
+    next: "Review detection",
+  },
+};
 
 let socket;
 let reconnectTimer;
 let eventsThisSecond = 0;
-let learning = false;
 let portStatus = null;
-
-function channelOptions(label) {
-  const fragment = document.createDocumentFragment();
-  fragment.append(new Option(label, ""));
-  for (let channel = 1; channel <= 16; channel += 1) {
-    fragment.append(new Option(`Channel ${channel}`, String(channel)));
-  }
-  return fragment;
-}
-
-trebleInput.append(channelOptions("Not mapped"));
-trebleOutput.append(channelOptions("No output channel"));
-
-function loadJson(key, fallback) {
-  try {
-    return JSON.parse(localStorage.getItem(key)) ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-const savedMapping = loadJson(STORAGE_MAPPING, {});
-trebleInput.value = savedMapping.inputChannel ?? "";
-trebleOutput.value = savedMapping.outputChannel ?? "";
-trebleBase.value = savedMapping.baseNote ?? "";
-velocity.value = savedMapping.velocity ?? 96;
-velocityValue.value = velocity.value;
-accordion.setBindings(loadJson(STORAGE_BINDINGS, {}));
-updateMappingState();
-updateBindingCount();
-
-function mapping() {
-  const numberOrNull = (value) => value === "" ? null : Number(value);
-  return {
-    inputChannel: numberOrNull(trebleInput.value),
-    outputChannel: numberOrNull(trebleOutput.value),
-    baseNote: numberOrNull(trebleBase.value),
-    velocity: Number(velocity.value),
-  };
-}
-
-function saveMapping() {
-  localStorage.setItem(STORAGE_MAPPING, JSON.stringify(mapping()));
-  updateMappingState();
-}
-
-function updateMappingState() {
-  const value = mapping();
-  const ready = value.inputChannel != null && value.baseNote != null;
-  mappingState.textContent = ready ? "Input mapped" : "Unmapped";
-  mappingState.classList.toggle("ready", ready);
-}
-
-function updateBindingCount() {
-  const count = Object.keys(accordion.bindings ?? {}).length;
-  bindingCount.textContent = `${count} learned`;
-  bindingCount.classList.toggle("ready", count > 0);
-}
+let midiProfile = null;
+let profileLoaded = false;
+let profileRestoreAttempted = false;
+let firstRunWizardShown = false;
+let wizardStep = 1;
+let captureIndex = 0;
+let capturing = false;
+let captures = freshCaptures();
+let detection = null;
 
 function setSocketState(state, label) {
   socketLed.className = `led ${state}`;
@@ -126,7 +88,9 @@ function handleServerEvent(event) {
   if (event.type === "status") {
     portStatus = event;
     populatePorts(event);
-    updateConnectionMessage(event);
+    restoreSavedPorts();
+    updateConnectionSummary();
+    maybeShowFirstRunWizard();
     return;
   }
   if (event.type === "error") {
@@ -136,13 +100,8 @@ function handleServerEvent(event) {
   if (event.type !== "midi") return;
 
   eventsThisSecond += 1;
-  accordion.applyMidi(event, mapping());
-  const learned = accordion.learnFromEvent(event);
-  if (learned) {
-    localStorage.setItem(STORAGE_BINDINGS, JSON.stringify(accordion.bindings));
-    updateBindingCount();
-    learnMessage.textContent = `Learned ${learned.id} from MIDI ${learned.signature}. Select another button or turn Learn off.`;
-  }
+  captureIncomingNote(event);
+  accordion.applyMidi(event);
   appendEvent(event);
   updateReadout(event);
 }
@@ -159,14 +118,94 @@ function replaceOptions(select, emptyLabel, names, selected) {
   if ([...select.options].some((option) => option.value === current)) select.value = current;
 }
 
-function updateConnectionMessage(status) {
-  if (status.error) {
-    showMessage(status.error, true);
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    ...options,
+    headers: { "Content-Type": "application/json", ...(options.headers ?? {}) },
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.detail ?? `${response.status} ${response.statusText}`);
+  }
+  return response.status === 204 ? null : response.json();
+}
+
+async function loadProfile() {
+  try {
+    midiProfile = await api("/api/midi/profile");
+    if (midiProfile) applyProfileToSurface(midiProfile);
+  } catch (error) {
+    showMessage(`Could not load the saved MIDI profile: ${error.message}`, true);
+  } finally {
+    profileLoaded = true;
+    updateConnectionSummary();
+    restoreSavedPorts();
+    maybeShowFirstRunWizard();
+  }
+}
+
+function applyProfileToSurface(profile) {
+  accordion.configureMidi(profile);
+}
+
+function restoreSavedPorts() {
+  if (!profileLoaded || !midiProfile || !portStatus || profileRestoreAttempted) return;
+  const inputAvailable = portStatus.inputs.includes(midiProfile.input_port);
+  const outputAvailable = midiProfile.output_port == null
+    || portStatus.outputs.includes(midiProfile.output_port);
+  if (portStatus.selected_input === midiProfile.input_port
+      && portStatus.selected_output === midiProfile.output_port) {
+    profileRestoreAttempted = true;
     return;
   }
-  const input = status.input_connected ? "input connected" : "input idle";
-  const output = status.output_connected ? "output connected" : "output idle";
-  showMessage(`${input}; ${output}. Port names are selected explicitly.`);
+  if (!inputAvailable) return;
+  const desiredOutput = outputAvailable ? midiProfile.output_port : null;
+  if (portStatus.selected_input === midiProfile.input_port
+      && portStatus.selected_output === desiredOutput) {
+    profileRestoreAttempted = outputAvailable;
+    return;
+  }
+  profileRestoreAttempted = outputAvailable;
+  send({
+    type: "ports.select",
+    input: midiProfile.input_port,
+    output: desiredOutput,
+  });
+}
+
+function maybeShowFirstRunWizard() {
+  if (!profileLoaded || !portStatus || midiProfile || firstRunWizardShown) return;
+  firstRunWizardShown = true;
+  openWizard();
+}
+
+function updateConnectionSummary() {
+  $("#profile-input").textContent = midiProfile?.input_port ?? "Not configured";
+  $("#profile-output").textContent = midiProfile?.output_port ?? "Not configured";
+  if (midiProfile) {
+    const roles = ROLE_ORDER.map((role) => `${role} ch ${midiProfile.roles[role].primary_channel}`);
+    $("#profile-roles").textContent = roles.join(" · ");
+  } else {
+    $("#profile-roles").textContent = "Run setup to detect channels";
+  }
+
+  if (portStatus?.error) {
+    showMessage(portStatus.error, true);
+    return;
+  }
+  if (!midiProfile) {
+    showMessage("No MIDI profile is saved yet.");
+    return;
+  }
+  if (!portStatus?.inputs.includes(midiProfile.input_port)) {
+    showMessage(`Saved input is unavailable: ${midiProfile.input_port}. Reconnect it or run setup again.`, true);
+    return;
+  }
+  const input = portStatus.input_connected ? "input connected" : "input waiting";
+  const output = midiProfile.output_port == null
+    ? "no simulator output configured"
+    : (portStatus.output_connected ? "output connected" : "output waiting");
+  showMessage(`${input}; ${output}. Saved profile restored by exact port name.`);
 }
 
 function showMessage(message, error = false) {
@@ -209,68 +248,248 @@ function sendNote(channel, note, active) {
     return;
   }
   const status = (active ? 0x90 : 0x80) | (channel - 1);
-  send({ type: "midi.send", bytes: [status, note, active ? mapping().velocity : 0] });
-}
-
-$("#apply-ports").addEventListener("click", () => {
   send({
-    type: "ports.select",
-    input: inputSelect.value || null,
-    output: outputSelect.value || null,
-  });
-});
-
-$("#refresh-ports").addEventListener("click", () => send({ type: "status.request" }));
-
-for (const control of [trebleInput, trebleOutput, trebleBase, velocity]) {
-  control.addEventListener("input", () => {
-    velocityValue.value = velocity.value;
-    saveMapping();
+    type: "midi.send",
+    bytes: [status, note, active ? SIMULATOR_VELOCITY : 0],
   });
 }
+
+function freshCaptures() {
+  return { treble: [], bass: [], chord: [] };
+}
+
+function openWizard() {
+  profileRestoreAttempted = false;
+  showWizardStep(1);
+  if (midiProfile) {
+    inputSelect.value = midiProfile.input_port;
+    outputSelect.value = midiProfile.output_port ?? "";
+  }
+  if (!wizard.open) wizard.showModal();
+}
+
+function showWizardStep(step) {
+  wizardStep = step;
+  for (const section of wizard.querySelectorAll(".wizard-step")) {
+    section.hidden = Number(section.dataset.step) !== step;
+  }
+  for (const item of wizard.querySelectorAll("[data-progress]")) {
+    const progress = Number(item.dataset.progress);
+    item.classList.toggle("current", progress === step);
+    item.classList.toggle("complete", progress < step);
+  }
+}
+
+async function connectForDetection() {
+  if (!inputSelect.value) {
+    setWizardMessage("port", "Select the accordion input before continuing.", true);
+    return;
+  }
+  try {
+    const status = await api("/api/midi/ports", {
+      method: "PUT",
+      body: JSON.stringify({
+        input: inputSelect.value,
+        output: outputSelect.value || null,
+      }),
+    });
+    portStatus = status;
+    if (!status.input_connected) throw new Error("The selected MIDI input did not open.");
+    captures = freshCaptures();
+    detection = null;
+    captureIndex = 0;
+    capturing = false;
+    updateCaptureCard();
+    setWizardMessage("detect", "Start capture when you are ready to play only the requested part.");
+    showWizardStep(2);
+  } catch (error) {
+    setWizardMessage("port", error.message, true);
+  }
+}
+
+function setWizardMessage(area, message, error = false) {
+  const element = $(`#wizard-${area}-message`);
+  element.textContent = message;
+  element.classList.toggle("error", error);
+}
+
+function updateCaptureCard() {
+  const role = ROLE_ORDER[captureIndex];
+  const copy = ROLE_COPY[role];
+  const observations = captures[role];
+  const channels = [...new Set(observations.map((item) => item.channel))].sort((a, b) => a - b);
+  $("#capture-kicker").textContent = copy.kicker;
+  $("#capture-title").textContent = copy.title;
+  $("#capture-instructions").textContent = copy.instructions;
+  $("#capture-count").textContent = `${observations.length} note event${observations.length === 1 ? "" : "s"}`;
+  $("#capture-channels").textContent = channels.length
+    ? `Observed ${channels.map((channel) => `ch ${channel}`).join(", ")}`
+    : "No channels observed";
+  $("#toggle-capture").textContent = capturing ? "Stop capture" : `Start ${role} capture`;
+  $("#toggle-capture").classList.toggle("active", capturing);
+  $("#capture-card").classList.toggle("recording", capturing);
+  $("#next-capture").textContent = copy.next;
+  $("#next-capture").disabled = capturing || observations.length === 0;
+}
+
+function toggleCapture() {
+  capturing = !capturing;
+  updateCaptureCard();
+  const role = ROLE_ORDER[captureIndex];
+  setWizardMessage(
+    "detect",
+    capturing
+      ? `Listening for ${role} note-on events…`
+      : `${captures[role].length} ${role} note events captured. Continue or capture more.`,
+  );
+}
+
+function captureIncomingNote(event) {
+  if (!capturing || wizardStep !== 2 || event.direction !== "in") return;
+  if (event.message_type !== "note_on" || event.velocity <= 0) return;
+  if (event.channel == null || event.note == null) return;
+  const role = ROLE_ORDER[captureIndex];
+  captures[role].push({ channel: event.channel, note: event.note });
+  $("#capture-pulse").classList.remove("hit");
+  requestAnimationFrame(() => $("#capture-pulse").classList.add("hit"));
+  updateCaptureCard();
+}
+
+async function advanceCapture() {
+  if (capturing || captures[ROLE_ORDER[captureIndex]].length === 0) return;
+  if (captureIndex < ROLE_ORDER.length - 1) {
+    captureIndex += 1;
+    updateCaptureCard();
+    setWizardMessage("detect", "Start capture when you are ready to play only the requested part.");
+    return;
+  }
+  try {
+    setWizardMessage("detect", "Comparing observed channel activity…");
+    const result = await api("/api/midi/detect", {
+      method: "POST",
+      body: JSON.stringify(captures),
+    });
+    detection = result.roles;
+    renderDetectionReview();
+    showWizardStep(3);
+  } catch (error) {
+    setWizardMessage("detect", `Detection failed: ${error.message}`, true);
+  }
+}
+
+function renderDetectionReview() {
+  const review = $("#detection-review");
+  review.replaceChildren();
+  for (const role of ROLE_ORDER) {
+    const result = detection[role];
+    const card = document.createElement("article");
+    card.className = "detection-card";
+    const heading = document.createElement("div");
+    heading.innerHTML = `<span>${role}</span><strong>${Math.round(result.confidence * 100)}% confidence</strong>`;
+    const label = document.createElement("label");
+    label.innerHTML = "<span>Observed channel</span>";
+    const select = document.createElement("select");
+    select.dataset.role = role;
+    for (const candidate of result.candidates) {
+      const range = `${Math.min(...candidate.notes)}–${Math.max(...candidate.notes)}`;
+      select.append(new Option(
+        `Channel ${candidate.channel} · ${candidate.event_count} events · notes ${range}`,
+        String(candidate.channel),
+      ));
+    }
+    select.value = String(result.primary_channel);
+    select.addEventListener("change", () => chooseCandidate(role, Number(select.value), card));
+    label.append(select);
+    const details = document.createElement("p");
+    details.className = "detection-details";
+    card.append(heading, label, details);
+    review.append(card);
+    updateDetectionCard(role, card);
+  }
+}
+
+function chooseCandidate(role, channel, card) {
+  const result = detection[role];
+  const candidate = result.candidates.find((item) => item.channel === channel);
+  result.primary_channel = candidate.channel;
+  result.note_min = Math.min(...candidate.notes);
+  result.note_max = Math.max(...candidate.notes);
+  result.event_count = candidate.event_count;
+  result.confidence = candidate.confidence;
+  updateDetectionCard(role, card);
+}
+
+function updateDetectionCard(role, card) {
+  const result = detection[role];
+  card.querySelector("strong").textContent = `${Math.round(result.confidence * 100)}% confidence`;
+  card.querySelector(".detection-details").textContent =
+    `Selected channel ${result.primary_channel}; observed notes ${result.note_min}–${result.note_max} across ${result.event_count} events.`;
+  card.classList.toggle("ambiguous", result.confidence < 0.75);
+}
+
+async function saveMidiProfile() {
+  const profile = {
+    schema_version: 1,
+    detection_method: "guided-activity-v1",
+    input_port: inputSelect.value,
+    output_port: outputSelect.value || null,
+    roles: detection,
+  };
+  try {
+    setWizardMessage("save", "Saving the reviewed profile…");
+    midiProfile = await api("/api/midi/profile", {
+      method: "PUT",
+      body: JSON.stringify(profile),
+    });
+    profileRestoreAttempted = true;
+    applyProfileToSurface(midiProfile);
+    updateConnectionSummary();
+    wizard.close();
+    showMessage("MIDI profile saved. The detected treble mapping is active.");
+  } catch (error) {
+    setWizardMessage("save", `Could not save the profile: ${error.message}`, true);
+  }
+}
+
+$("#open-midi-wizard").addEventListener("click", openWizard);
+$("#refresh-ports").addEventListener("click", () => send({ type: "status.request" }));
+$("#connect-and-detect").addEventListener("click", connectForDetection);
+$("#back-to-ports").addEventListener("click", () => {
+  capturing = false;
+  showWizardStep(1);
+});
+$("#toggle-capture").addEventListener("click", toggleCapture);
+$("#next-capture").addEventListener("click", advanceCapture);
+$("#repeat-detection").addEventListener("click", () => {
+  captures = freshCaptures();
+  detection = null;
+  captureIndex = 0;
+  capturing = false;
+  updateCaptureCard();
+  showWizardStep(2);
+});
+$("#save-midi-profile").addEventListener("click", saveMidiProfile);
+wizard.addEventListener("close", () => {
+  capturing = false;
+  updateCaptureCard();
+});
 
 accordion.addEventListener("surface-note", ({ detail }) => {
-  const value = mapping();
-  if (value.outputChannel == null || value.baseNote == null) {
-    if (detail.active) showMessage("Set a simulator output channel and leftmost key note first.", true);
+  if (detail.channel == null || detail.note == null) {
+    if (detail.active) showMessage("Run MIDI setup before using the simulator.", true);
     return;
   }
-  const note = value.baseNote + detail.index;
-  if (note > 127) {
-    showMessage("The mapped piano range exceeds MIDI note 127.", true);
-    return;
-  }
-  sendNote(value.outputChannel, note, detail.active);
-});
-
-accordion.addEventListener("surface-bass", ({ detail }) => {
   sendNote(detail.channel, detail.note, detail.active);
 });
 
-accordion.addEventListener("learn-target", ({ detail }) => {
-  learnMessage.textContent = `Waiting for the physical event for ${detail.id}…`;
+accordion.addEventListener("surface-left", ({ detail }) => {
+  for (const note of detail.notes) {
+    sendNote(detail.channel, note, detail.active);
+  }
 });
 
-accordion.addEventListener("unmapped-button", ({ detail }) => {
-  learnMessage.textContent = `${detail.id} has no learned MIDI event. Turn Learn on to bind it.`;
-});
-
-learnButton.addEventListener("click", () => {
-  learning = !learning;
-  accordion.setLearning(learning);
-  learnButton.classList.toggle("active", learning);
-  learnButton.textContent = learning ? "Learning on" : "Learn";
-  learnMessage.textContent = learning
-    ? "Click a visual left-hand button, then press its physical counterpart."
-    : "Learning is off.";
-});
-
-$("#clear-left").addEventListener("click", () => {
-  if (!window.confirm("Clear all browser-local left-hand bindings?")) return;
-  accordion.setBindings({});
-  localStorage.removeItem(STORAGE_BINDINGS);
-  updateBindingCount();
-  learnMessage.textContent = "All browser-local bindings were cleared.";
+accordion.addEventListener("unmapped-button", () => {
+  showMessage("That visual button has no MIDI note observed by the setup wizard.", true);
 });
 
 $("#clear-events").addEventListener("click", () => {
@@ -282,5 +501,5 @@ setInterval(() => {
   eventsThisSecond = 0;
 }, 1000);
 
+loadProfile();
 connectSocket();
-

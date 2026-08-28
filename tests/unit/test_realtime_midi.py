@@ -127,6 +127,23 @@ class MidiServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(len(self.backend.input_handles), 2)
         self.assertIs(self.service.snapshot()["input_connected"], True)
 
+    async def test_saved_exact_port_can_be_restored_before_it_is_available(
+        self,
+    ) -> None:
+        self.backend.inputs.clear()
+        snapshot = self.service.restore_ports(
+            input_name="Accordion test input",
+            output_name=None,
+        )
+
+        self.assertEqual(snapshot["selected_input"], "Accordion test input")
+        self.assertIs(snapshot["input_connected"], False)
+
+        self.backend.inputs.append("Accordion test input")
+        await asyncio.sleep(0.03)
+
+        self.assertIs(self.service.snapshot()["input_connected"], True)
+
 
 if __name__ == "__main__":
     unittest.main()

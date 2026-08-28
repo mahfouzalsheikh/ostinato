@@ -33,7 +33,8 @@
           <h1>See the instrument breathe.</h1>
           <p class="lede">
             Incoming MIDI animates a responsive FR-4X-shaped surface. Play its
-            keys to send MIDI back through an explicitly selected output.
+            projected keys to send the observed MIDI notes back through the
+            selected output.
           </p>
         </div>
         <div id="transport-readout" class="readout" aria-live="polite">
@@ -46,32 +47,29 @@
       <section class="panel connection-panel" aria-labelledby="connection-title">
         <div class="panel-heading">
           <div>
-            <p class="eyebrow">Linux ALSA / RtMidi</p>
-            <h2 id="connection-title">MIDI connections</h2>
+            <p class="eyebrow">Saved hardware profile</p>
+            <h2 id="connection-title">MIDI setup</h2>
           </div>
-          <button id="refresh-ports" class="secondary-button" type="button">
-            Refresh ports
+          <button id="open-midi-wizard" class="primary-button" type="button">
+            Set up MIDI
           </button>
         </div>
-        <div class="connection-grid">
-          <label>
-            <span>Input from accordion</span>
-            <select id="midi-input">
-              <option value="">No input selected</option>
-            </select>
-          </label>
-          <label>
-            <span>Output from simulator</span>
-            <select id="midi-output">
-              <option value="">No output selected</option>
-            </select>
-          </label>
-          <button id="apply-ports" class="primary-button" type="button">
-            Apply connections
-          </button>
+        <div class="profile-summary">
+          <div>
+            <span>Input</span>
+            <strong id="profile-input">Not configured</strong>
+          </div>
+          <div>
+            <span>Output</span>
+            <strong id="profile-output">Not configured</strong>
+          </div>
+          <div>
+            <span>Detected roles</span>
+            <strong id="profile-roles">Run setup to detect channels</strong>
+          </div>
         </div>
         <p id="connection-message" class="inline-message" aria-live="polite">
-          No ports are selected. This interface never guesses an ALSA port name.
+          No MIDI profile is saved yet.
         </p>
       </section>
 
@@ -92,60 +90,6 @@
       </section>
 
       <section class="lower-grid">
-        <article class="panel mapping-panel">
-          <div class="panel-heading compact">
-            <div>
-              <p class="eyebrow">Explicit mapping</p>
-              <h2>Treble keyboard</h2>
-            </div>
-            <span id="mapping-state" class="status-chip">Unmapped</span>
-          </div>
-          <p class="panel-copy">
-            Enter values observed from your FR-4X capture. Nothing here assumes
-            an instrument channel or transposition.
-          </p>
-          <div class="mapping-grid">
-            <label>
-              <span>Input channel</span>
-              <select id="treble-input-channel"></select>
-            </label>
-            <label>
-              <span>Leftmost key MIDI note</span>
-              <input id="treble-base-note" type="number" min="0" max="91" placeholder="Unset" />
-            </label>
-            <label>
-              <span>Simulator output channel</span>
-              <select id="treble-output-channel"></select>
-            </label>
-            <label>
-              <span>Simulator velocity</span>
-              <input id="simulator-velocity" type="range" min="1" max="127" value="96" />
-              <output id="velocity-value">96</output>
-            </label>
-          </div>
-        </article>
-
-        <article class="panel mapping-panel">
-          <div class="panel-heading compact">
-            <div>
-              <p class="eyebrow">User-trained bindings</p>
-              <h2>Left-hand buttons</h2>
-            </div>
-            <span id="binding-count" class="status-chip">0 learned</span>
-          </div>
-          <p class="panel-copy">
-            Select Learn, click one visual button, then press its physical
-            counterpart. Bindings stay in this browser and are not FR-4X defaults.
-          </p>
-          <div class="button-row">
-            <button id="learn-left" class="primary-button" type="button">Learn</button>
-            <button id="clear-left" class="secondary-button danger" type="button">
-              Clear bindings
-            </button>
-          </div>
-          <p id="learn-message" class="inline-message">Learning is off.</p>
-        </article>
-
         <article class="panel event-panel">
           <div class="panel-heading compact">
             <div>
@@ -163,11 +107,104 @@
       <aside class="scope-note">
         <strong>Current safety boundary</strong>
         <span>
-          The surface visualizes raw MIDI and user-entered mappings. Production
-          FR-4X bass/chord recognition remains pending representative H1 captures.
-          The accordion's analog audio stays on its direct mixer path.
+          Guided setup aligns the piano by MIDI pitch and projects detected
+          bass/chord activity onto the documented two-bass-row Stradella
+          layout. Chord-channel notes are grouped into major, minor, seventh,
+          or diminished buttons. A bass MIDI note alone cannot always
+          distinguish fundamental from counterbass, so both possible buttons
+          are outlined until chord context resolves the row. The accordion's analog
+          audio stays on its direct mixer path.
         </span>
       </aside>
     </main>
+
+    <dialog id="midi-wizard" class="wizard-dialog" aria-labelledby="wizard-title">
+      <form method="dialog" class="wizard-shell">
+        <header class="wizard-header">
+          <div>
+            <p class="eyebrow">Guided hardware setup</p>
+            <h2 id="wizard-title">Connect your accordion</h2>
+          </div>
+          <button id="close-midi-wizard" class="icon-button" value="cancel" aria-label="Close setup">×</button>
+        </header>
+
+        <ol class="wizard-progress" aria-label="Setup progress">
+          <li data-progress="1" class="current"><span>1</span> Ports</li>
+          <li data-progress="2"><span>2</span> Detect</li>
+          <li data-progress="3"><span>3</span> Review</li>
+        </ol>
+
+        <section class="wizard-step" data-step="1">
+          <p class="wizard-intro">
+            Choose exact ports reported by ALSA. The input is required for
+            detection; the output is optional and is used by the simulator.
+          </p>
+          <div class="wizard-port-grid">
+            <label>
+              <span>Input from accordion</span>
+              <select id="midi-input">
+                <option value="">No input selected</option>
+              </select>
+            </label>
+            <label>
+              <span>Output from simulator</span>
+              <select id="midi-output">
+                <option value="">No output selected</option>
+              </select>
+            </label>
+          </div>
+          <p id="wizard-port-message" class="inline-message" aria-live="polite">
+            Select an input to continue.
+          </p>
+          <footer class="wizard-actions">
+            <button id="refresh-ports" class="secondary-button" type="button">Refresh ports</button>
+            <button id="connect-and-detect" class="primary-button" type="button">Connect and detect</button>
+          </footer>
+        </section>
+
+        <section class="wizard-step" data-step="2" hidden>
+          <p class="wizard-intro">
+            Perform one labeled part at a time. Ostinato records note activity
+            only while capture is on and compares the observed channels.
+          </p>
+          <div id="capture-card" class="capture-card">
+            <span id="capture-kicker" class="capture-kicker">Right keyboard · treble</span>
+            <h3 id="capture-title">Play several right-hand piano keys</h3>
+            <p id="capture-instructions">
+              Play the physical lowest and highest keys, plus several keys in between.
+            </p>
+            <div class="capture-meter" aria-live="polite">
+              <i id="capture-pulse"></i>
+              <strong id="capture-count">0 note events</strong>
+              <span id="capture-channels">No channels observed</span>
+            </div>
+            <button id="toggle-capture" class="primary-button capture-button" type="button">Start treble capture</button>
+          </div>
+          <p id="wizard-detect-message" class="inline-message" aria-live="polite">
+            Start capture when you are ready to play only the requested part.
+          </p>
+          <footer class="wizard-actions">
+            <button id="back-to-ports" class="secondary-button" type="button">Back</button>
+            <button id="next-capture" class="primary-button" type="button" disabled>Next: bass buttons</button>
+          </footer>
+        </section>
+
+        <section class="wizard-step" data-step="3" hidden>
+          <p class="wizard-intro">
+            Review the channels inferred from your labeled performances. Low
+            confidence means a channel also appeared in another phase; choose
+            the correct observed candidate before saving.
+          </p>
+          <div id="detection-review" class="detection-review"></div>
+          <p id="wizard-save-message" class="inline-message" aria-live="polite">
+            Nothing is saved until you confirm this review.
+          </p>
+          <footer class="wizard-actions">
+            <button id="repeat-detection" class="secondary-button" type="button">Repeat detection</button>
+            <button id="save-midi-profile" class="primary-button" type="button">Save MIDI profile</button>
+          </footer>
+        </section>
+      </form>
+    </dialog>
   </body>
 </html>
