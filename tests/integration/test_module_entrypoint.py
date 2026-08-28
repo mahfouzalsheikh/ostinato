@@ -25,6 +25,7 @@ class ModuleEntrypointTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("doctor", result.stdout)
         self.assertIn("keyboard", result.stdout)
+        self.assertIn("web", result.stdout)
 
     def test_scripted_keyboard_input_succeeds(self) -> None:
         root = Path(__file__).resolve().parents[2]

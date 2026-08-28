@@ -56,6 +56,22 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="BPM",
         help="audible demo tempo from 40 to 240 BPM (default: 120)",
     )
+
+    web = commands.add_parser(
+        "web",
+        help="serve the real-time MIDI monitor and accordion surface",
+    )
+    web.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="listen address (default: 127.0.0.1)",
+    )
+    web.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="listen port from 1 to 65535 (default: 8765)",
+    )
     return parser
 
 
@@ -79,4 +95,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             json_output=arguments.json,
             tempo_bpm=arguments.tempo,
         )
+    if arguments.command == "web":
+        if not 1 <= arguments.port <= 65535:
+            build_parser().error("web --port must be from 1 to 65535")
+        from ostinato.web_server import run_web
+
+        return run_web(host=arguments.host, port=arguments.port)
     return 2

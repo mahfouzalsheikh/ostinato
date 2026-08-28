@@ -4,11 +4,11 @@ Project Ostinato is a Linux proof of concept for a live arranger driven by a
 Roland FR-4X V-Accordion. The accordion's analog audio remains connected
 directly to the mixer; the computer produces accompaniment only.
 
-The repository currently implements milestone **P0** plus a hardware-free
-computer-keyboard chord source and an experimental audible arranger demo. The
-demo turns explicit keyboard chord choices into an original modern-tango
-pattern through the computer's default audio output. FR-4X MIDI recording and
-recognition deliberately wait for representative hardware captures.
+The repository currently implements milestone **P0**, a hardware-free
+computer-keyboard chord source, an experimental audible arranger demo, and a
+real-time web/MIDI surface foundation. The web interface monitors raw MIDI and
+uses explicit, browser-local mappings; FR-4X recording and production chord
+recognition still wait for representative hardware captures.
 
 ## Quick start
 
@@ -57,10 +57,11 @@ layout and scripted mode.
 ## Docker
 
 On a native Linux Docker host, the Compose setup can expose the host USB bus
-and ALSA devices without running a fully privileged container:
+and ALSA devices without running a fully privileged container. Start the live
+web service and open <http://127.0.0.1:8765>:
 
 ```bash
-docker compose build
+docker compose up --build --detach
 docker compose run --rm ostinato doctor
 docker compose run --rm --entrypoint lsusb ostinato
 ```
@@ -69,6 +70,15 @@ Raw USB passthrough grants broad access to host USB devices. Read the
 [Docker and USB guide](docs/docker.md) for the security boundary, reconnect
 behavior, direct-ALSA audio path, and narrower ALSA-only option.
 
+For host development without Docker:
+
+```bash
+pipenv run ostinato web
+```
+
+See the [real-time web interface guide](docs/web-interface.md) before mapping
+physical FR-4X events or sending simulator MIDI.
+
 ## Documentation
 
 - [How the system works](docs/architecture.md)
@@ -76,6 +86,7 @@ behavior, direct-ALSA audio path, and narrower ALSA-only option.
 - [Pipenv development guide](docs/development.md)
 - [Computer-only testing](docs/computer-only-testing.md)
 - [Docker and USB passthrough](docs/docker.md)
+- [Real-time web/MIDI interface](docs/web-interface.md)
 - [Style format design contract](docs/style-format.md)
 
 ## System preparation
@@ -92,10 +103,13 @@ commit personal device names or an unverified FR-4X mapping as shared defaults.
 - Implemented: OST-001 through OST-003 (P0 software slice).
 - Pending hardware: FluidSynth playback/endurance observation and FR-4X capture.
 - Available without accordion hardware: explicit computer-keyboard chord-state
-  input and an experimental built-in accompaniment through the default host
-  audio route.
+  input, an experimental built-in accompaniment through the default host audio
+  route, and the web surface with fake-backend automated tests.
+- Available with user-selected ports: raw MIDI monitoring/output, a 37-key
+  piano surface, and a user-trained 120-button left-hand surface.
 - Intentionally absent: FR-4X chord recognition, the production style
-  loader/planner/dispatcher and FluidSynth path, UI, and Pi services.
+  loader/planner/dispatcher and FluidSynth path, authenticated remote access,
+  and Pi services.
 
 The complete milestone sequence and acceptance criteria are in
 `project-ostinato-codex-execution-plan.md`.

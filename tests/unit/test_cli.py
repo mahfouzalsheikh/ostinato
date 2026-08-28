@@ -60,6 +60,13 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         run.assert_called_once_with(keys=None, json_output=False, tempo_bpm=96)
 
+    def test_web_command_delegates_to_server(self) -> None:
+        with patch("ostinato.web_server.run_web", return_value=0) as run:
+            exit_code = main(["web", "--host", "0.0.0.0", "--port", "8123"])
+
+        self.assertEqual(exit_code, 0)
+        run.assert_called_once_with(host="0.0.0.0", port=8123)
+
 
 if __name__ == "__main__":
     unittest.main()

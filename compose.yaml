@@ -16,7 +16,22 @@ services:
     device_cgroup_rules:
       - "c 116:* rwm" # ALSA
       - "c 189:* rwm" # USB device filesystem
+    ports:
+      - "${OSTINATO_WEB_BIND:-127.0.0.1}:${OSTINATO_WEB_PORT:-8765}:8000"
+    init: true
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=2)
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
     stdin_open: true
     tty: true
-    command: ["doctor"]
-
+    command: ["web", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#080b0d" />
+    <title>Ostinato Live Surface</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23080b0d'/%3E%3Ctext x='32' y='44' fill='%2365f6d1' font-size='40' text-anchor='middle'%3EO%3C/text%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="/assets/styles.css" />
+    <script type="module" src="/assets/app.js"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Project Ostinato home">
+        <span class="brand-mark" aria-hidden="true">O</span>
+        <span>
+          <strong>Ostinato</strong>
+          <small>Live MIDI surface</small>
+        </span>
+      </a>
+      <div class="system-state" aria-live="polite">
+        <span id="socket-led" class="led"></span>
+        <span id="socket-state">Connecting</span>
+        <span class="divider"></span>
+        <span id="event-rate">0 msg/s</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Performance monitor / simulator</p>
+          <h1>See the instrument breathe.</h1>
+          <p class="lede">
+            Incoming MIDI animates a responsive FR-4X-shaped surface. Play its
+            keys to send MIDI back through an explicitly selected output.
+          </p>
+        </div>
+        <div id="transport-readout" class="readout" aria-live="polite">
+          <span class="readout-label">Last event</span>
+          <strong>Waiting for MIDI</strong>
+          <code>—</code>
+        </div>
+      </section>
+
+      <section class="panel connection-panel" aria-labelledby="connection-title">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Linux ALSA / RtMidi</p>
+            <h2 id="connection-title">MIDI connections</h2>
+          </div>
+          <button id="refresh-ports" class="secondary-button" type="button">
+            Refresh ports
+          </button>
+        </div>
+        <div class="connection-grid">
+          <label>
+            <span>Input from accordion</span>
+            <select id="midi-input">
+              <option value="">No input selected</option>
+            </select>
+          </label>
+          <label>
+            <span>Output from simulator</span>
+            <select id="midi-output">
+              <option value="">No output selected</option>
+            </select>
+          </label>
+          <button id="apply-ports" class="primary-button" type="button">
+            Apply connections
+          </button>
+        </div>
+        <p id="connection-message" class="inline-message" aria-live="polite">
+          No ports are selected. This interface never guesses an ALSA port name.
+        </p>
+      </section>
+
+      <section class="surface-section" aria-labelledby="surface-title">
+        <div class="surface-heading">
+          <div>
+            <p class="eyebrow">37 keys / 120 buttons</p>
+            <h2 id="surface-title">Accordion surface</h2>
+          </div>
+          <div class="surface-legend">
+            <span><i class="legend-dot incoming"></i> MIDI input</span>
+            <span><i class="legend-dot outgoing"></i> Browser output</span>
+          </div>
+        </div>
+        <div class="instrument-scroll" tabindex="0" aria-label="Accordion visualizer">
+          <fr4x-accordion id="accordion"></fr4x-accordion>
+        </div>
+      </section>
+
+      <section class="lower-grid">
+        <article class="panel mapping-panel">
+          <div class="panel-heading compact">
+            <div>
+              <p class="eyebrow">Explicit mapping</p>
+              <h2>Treble keyboard</h2>
+            </div>
+            <span id="mapping-state" class="status-chip">Unmapped</span>
+          </div>
+          <p class="panel-copy">
+            Enter values observed from your FR-4X capture. Nothing here assumes
+            an instrument channel or transposition.
+          </p>
+          <div class="mapping-grid">
+            <label>
+              <span>Input channel</span>
+              <select id="treble-input-channel"></select>
+            </label>
+            <label>
+              <span>Leftmost key MIDI note</span>
+              <input id="treble-base-note" type="number" min="0" max="91" placeholder="Unset" />
+            </label>
+            <label>
+              <span>Simulator output channel</span>
+              <select id="treble-output-channel"></select>
+            </label>
+            <label>
+              <span>Simulator velocity</span>
+              <input id="simulator-velocity" type="range" min="1" max="127" value="96" />
+              <output id="velocity-value">96</output>
+            </label>
+          </div>
+        </article>
+
+        <article class="panel mapping-panel">
+          <div class="panel-heading compact">
+            <div>
+              <p class="eyebrow">User-trained bindings</p>
+              <h2>Left-hand buttons</h2>
+            </div>
+            <span id="binding-count" class="status-chip">0 learned</span>
+          </div>
+          <p class="panel-copy">
+            Select Learn, click one visual button, then press its physical
+            counterpart. Bindings stay in this browser and are not FR-4X defaults.
+          </p>
+          <div class="button-row">
+            <button id="learn-left" class="primary-button" type="button">Learn</button>
+            <button id="clear-left" class="secondary-button danger" type="button">
+              Clear bindings
+            </button>
+          </div>
+          <p id="learn-message" class="inline-message">Learning is off.</p>
+        </article>
+
+        <article class="panel event-panel">
+          <div class="panel-heading compact">
+            <div>
+              <p class="eyebrow">Raw, unmodified evidence</p>
+              <h2>MIDI event stream</h2>
+            </div>
+            <button id="clear-events" class="secondary-button" type="button">Clear</button>
+          </div>
+          <ol id="event-list" class="event-list" aria-live="polite">
+            <li class="empty-event">No MIDI events received.</li>
+          </ol>
+        </article>
+      </section>
+
+      <aside class="scope-note">
+        <strong>Current safety boundary</strong>
+        <span>
+          The surface visualizes raw MIDI and user-entered mappings. Production
+          FR-4X bass/chord recognition remains pending representative H1 captures.
+          The accordion's analog audio stays on its direct mixer path.
+        </span>
+      </aside>
+    </main>
+  </body>
+</html>

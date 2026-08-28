@@ -10,14 +10,30 @@ accordion voice.
 ## Runtime model
 
 ```text
-FR-4X MIDI -> capture/verified mapping --+
-                                         |
-computer keyboard -> explicit mapping ---+-> chord state -> planner -> dispatcher -> synth
-                                         |       |
-                                         |       +-> built-in audible POC (computer only)
-                                         |
-                                         +------ diagnostics
+FR-4X MIDI -> raw MIDI service -> WebSocket -> browser accordion surface
+                   |                            |
+                   |                            +-> explicit/user-trained mapping
+                   +<------- simulator MIDI ----+
+                   |
+                   +-> capture/verified mapping --+
+                                                    |
+computer keyboard -> explicit mapping --------------+-> chord state -> planner -> dispatcher -> synth
+                                                    |       |
+                                                    |       +-> built-in audible POC (computer only)
+                                                    |
+                                                    +------ diagnostics
 ```
+
+The real-time web service selects only exact names returned by the MIDI
+backend. A callback timestamps raw messages with `time.monotonic_ns()` and
+hands them to bounded per-browser queues on the asyncio event loop. WebSocket
+clients receive raw bytes plus neutral message fields. Browser-generated MIDI
+is validated before reaching the selected output. Port discovery and reconnect
+monitoring do not contain an FR-4X name, channel, note range, or chord encoding.
+
+The display is an observer/simulator and does not own accompaniment playback.
+Its WebSocket path is best-effort UI telemetry, not the future event dispatcher
+or a timing acceptance result.
 
 All input sources converge on a `ChordState`: root pitch class, quality,
 optional bass pitch class, confidence, source event identifiers, and monotonic
@@ -58,6 +74,6 @@ MIDI output messages and therefore has no instrument or percussion channels.
 Its noise-shaped procedural drum voices are separate from the later FluidSynth
 and SoundFont output design.
 
-The demo is not the future validated style loader, tick-based planner,
+The web surface and demo are not the future validated style loader, tick-based planner,
 dispatcher, FluidSynth path, or FR-4X mapping. It changes no host settings and
 does not claim any accordion or audio-latency evidence.

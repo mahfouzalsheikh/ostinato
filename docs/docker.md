@@ -6,13 +6,40 @@ devices and USB device filesystem to the container. It does not route the
 FR-4X analog audio through Ostinato: keep that signal connected directly to
 the mixer as described in [connections.md](connections.md).
 
-## Build and diagnose
+## Start the web service
 
 Docker Engine and the Compose plugin must already be installed on the Linux
 host. From the repository root:
 
 ```bash
-docker compose build
+docker compose up --build --detach
+docker compose ps
+```
+
+Open <http://127.0.0.1:8765>. The service publishes only on host loopback by
+default and its health check probes `/api/health`. To use another host port:
+
+```bash
+OSTINATO_WEB_PORT=8080 docker compose up --build --detach
+```
+
+The interface has no login or TLS termination. Deliberately exposing it to the
+LAN requires an explicit bind override and an appropriate trusted-network
+boundary:
+
+```bash
+OSTINATO_WEB_BIND=0.0.0.0 docker compose up --build --detach
+```
+
+Stop the service with `docker compose down`. See
+[web-interface.md](web-interface.md) for port selection and mapping behavior.
+
+## Diagnose and run one-off commands
+
+The service can stay running while separate one-off containers perform the
+read-only diagnostics:
+
+```bash
 docker compose run --rm ostinato doctor
 docker compose run --rm --entrypoint lsusb ostinato
 ```
