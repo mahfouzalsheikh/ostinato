@@ -54,12 +54,28 @@ four-measure ending at the next bar.
 See the [computer-only testing guide](docs/computer-only-testing.md) for the key
 layout and scripted mode.
 
+## Docker
+
+On a native Linux Docker host, the Compose setup can expose the host USB bus
+and ALSA devices without running a fully privileged container:
+
+```bash
+docker compose build
+docker compose run --rm ostinato doctor
+docker compose run --rm --entrypoint lsusb ostinato
+```
+
+Raw USB passthrough grants broad access to host USB devices. Read the
+[Docker and USB guide](docs/docker.md) for the security boundary, reconnect
+behavior, direct-ALSA audio path, and narrower ALSA-only option.
+
 ## Documentation
 
 - [How the system works](docs/architecture.md)
 - [Physical and USB/audio connections](docs/connections.md)
 - [Pipenv development guide](docs/development.md)
 - [Computer-only testing](docs/computer-only-testing.md)
+- [Docker and USB passthrough](docs/docker.md)
 - [Style format design contract](docs/style-format.md)
 
 ## System preparation

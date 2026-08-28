@@ -79,3 +79,44 @@ through the computer.
 OST-001 through OST-003 are complete. OST-004 and H1 require user-controlled
 hardware activity. Per the execution contract, implementation stops before P1
 and does not invent an FR-4X event mapping.
+
+## Docker packaging addendum — 2026-08-28
+
+### Automated
+
+A multi-stage Python 3.12 image and Linux Compose service now package the
+locked runtime environment, ALSA utilities, FluidSynth, and `usbutils`.
+Compose grants only ALSA and USB character-device classes rather than using a
+fully privileged container.
+
+| Command | Result |
+| --- | --- |
+| `docker compose config --quiet` | PASS |
+| `docker compose build` | PASS |
+| `docker compose run --rm ostinato --help` | PASS — exit 0 |
+| `docker compose run --rm ostinato doctor` | PASS — exit 0 |
+| `docker compose run --rm ostinato keyboard --keys zagxgq` | PASS — scripted chord changes and quit |
+| `pipenv run scripts/run-checks.sh` | PASS — 40 tests, Ruff, format check, and mypy |
+
+### Observed
+
+On the Linux development host, `lsusb` in the Compose container enumerated the
+same host USB controllers and attached peripherals exposed under
+`/dev/bus/usb`. The container also accessed `/dev/snd/seq` and reported the
+kernel ALSA sequencer client. No Roland/FR-4X USB identity or FR-4X MIDI port
+was present in the captured output.
+
+These observations prove the configured device mounts were active on this
+host. They do not prove that the FR-4X transmitted MIDI or that accompaniment
+audio played correctly.
+
+### Pending
+
+- Connect the FR-4X and confirm its verified identity appears in container
+  `lsusb`, `aconnect -l`, or `amidi -l` output.
+- Disconnect and reconnect the FR-4X while the service is running and observe
+  whether the replacement device node and ALSA port become available.
+- Exercise the container's direct-ALSA output and record the selected device;
+  no PipeWire desktop-session socket is mounted by the initial setup.
+- Measure latency and xruns separately. Container enumeration is not timing or
+  endurance evidence.

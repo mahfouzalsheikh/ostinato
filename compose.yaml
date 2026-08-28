@@ -1,0 +1,22 @@
+services:
+  ostinato:
+    build:
+      context: .
+    image: project-ostinato:local
+    # Raw USB nodes on common Linux hosts are writable only by root. The
+    # cgroup rules below still limit device access to ALSA and USB character
+    # devices; the container is not privileged.
+    user: "0:0"
+    devices:
+      - /dev/snd:/dev/snd
+    volumes:
+      - type: bind
+        source: /dev/bus/usb
+        target: /dev/bus/usb
+    device_cgroup_rules:
+      - "c 116:* rwm" # ALSA
+      - "c 189:* rwm" # USB device filesystem
+    stdin_open: true
+    tty: true
+    command: ["doctor"]
+
