@@ -1,4 +1,5 @@
 import "./fr4x-accordion.js?v=11";
+import { projectedBeatIndex } from "./arranger-clock.js?v=1";
 
 const $ = (selector) => document.querySelector(selector);
 const accordion = $("#accordion");
@@ -15,6 +16,8 @@ const arrangerStyle = $("#arranger-style");
 const arrangerMessage = $("#arranger-message");
 const fixedTempo = $("#arranger-fixed-tempo");
 const audioOutputDialog = $("#audio-output-dialog");
+const beatLights = $("#arranger-beat-lights");
+const beatLabel = $("#arranger-beat-label");
 
 const MAX_EVENTS = 60;
 const SIMULATOR_VELOCITY = 96;
@@ -54,6 +57,7 @@ let capturing = false;
 let captures = freshCaptures();
 let detection = null;
 let arrangerStatus = null;
+let beatClock = null;
 
 function setSocketState(state, label) {
   socketLed.className = `led ${state}`;
@@ -157,6 +161,7 @@ async function arrangerCommand(action, value = null) {
 
 function renderArrangerStatus(status) {
   arrangerStatus = status;
+  beatClock = { status, sampledAtMilliseconds: performance.now() };
   const optionSignature = status.styles.map((style) => style.id).join(":");
   if (arrangerStyle.dataset.options !== optionSignature) {
     arrangerStyle.replaceChildren(...status.styles.map((style) => {
@@ -189,6 +194,7 @@ function renderArrangerStatus(status) {
   $("#arranger-stop").disabled = !status.running;
   $("#arranger-ending").disabled = !status.running;
   $("#arranger-sync").setAttribute("aria-pressed", String(status.sync_enabled));
+  renderBeatIndicator(status, 0);
 
   if (status.error) {
     setArrangerMessage(status.error, true);
@@ -205,6 +211,49 @@ function renderArrangerStatus(status) {
   } else {
     setArrangerMessage("Bass tempo is style-normalized. Switch to Fixed if you do not want strokes to change it.");
   }
+}
+
+function ensureBeatLights(beatsPerBar) {
+  if (beatLights.children.length === beatsPerBar) return;
+  beatLights.replaceChildren(...Array.from({ length: beatsPerBar }, (_, index) => {
+    const light = document.createElement("li");
+    light.className = "beat-light";
+    light.dataset.beat = String(index);
+    light.innerHTML = `<i aria-hidden="true"></i><span>${index + 1}</span>`;
+    return light;
+  }));
+}
+
+function renderBeatIndicator(status, elapsedMilliseconds) {
+  ensureBeatLights(status.beats_per_bar);
+  const activeBeat = projectedBeatIndex(status, elapsedMilliseconds);
+  for (const light of beatLights.children) {
+    const active = Number(light.dataset.beat) === activeBeat;
+    light.classList.toggle("active", active);
+    light.classList.toggle("downbeat", active && activeBeat === 0);
+    if (active) light.setAttribute("aria-current", "step");
+    else light.removeAttribute("aria-current");
+  }
+  beatLights.classList.toggle("running", activeBeat != null);
+  beatLights.setAttribute(
+    "aria-label",
+    activeBeat == null
+      ? `${status.beats_per_bar}/4 bar position, stopped`
+      : `Beat ${activeBeat + 1} of ${status.beats_per_bar}`,
+  );
+  beatLabel.textContent = activeBeat == null
+    ? `Ready · ${status.beats_per_bar}/4`
+    : `Beat ${activeBeat + 1} / ${status.beats_per_bar}`;
+}
+
+function animateBeatIndicator(nowMilliseconds) {
+  if (beatClock) {
+    renderBeatIndicator(
+      beatClock.status,
+      nowMilliseconds - beatClock.sampledAtMilliseconds,
+    );
+  }
+  requestAnimationFrame(animateBeatIndicator);
 }
 
 function updateTempoKnob(value) {
@@ -695,6 +744,7 @@ setInterval(() => {
 }, 1000);
 
 setInterval(loadArrangerStatus, 350);
+requestAnimationFrame(animateBeatIndicator);
 
 loadProfile();
 loadArrangerStatus();

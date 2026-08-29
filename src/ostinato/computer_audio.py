@@ -38,6 +38,7 @@ BASS_C_NOTE = 36
 LOW_C_NOTE = 48
 MIDDLE_C_NOTE = 60
 UPPER_C_NOTE = 72
+TRANSPORT_TICKS_PER_BEAT = 96
 
 
 class AudioPlaybackError(RuntimeError):
@@ -62,6 +63,9 @@ class ArrangementRenderer(Protocol):
 
     @property
     def section(self) -> DemoSection: ...
+
+    @property
+    def position_ticks(self) -> int: ...
 
     def set_tempo(self, tempo_bpm: int) -> None: ...
 
@@ -329,6 +333,12 @@ class DemoArrangementRenderer:
         """Return the continuous musical position at the next audio frame."""
 
         return self._beat_at_frame(self._frame_position)
+
+    @property
+    def position_ticks(self) -> int:
+        """Return the rendered transport position as integer musical ticks."""
+
+        return round(self.beat_position * TRANSPORT_TICKS_PER_BEAT)
 
     @property
     def section(self) -> DemoSection:
@@ -1612,6 +1622,16 @@ class RealtimeDemoArranger:
         """Return the most recently rendered section."""
 
         return self._renderer.section
+
+    @property
+    def position_ticks(self) -> int:
+        """Return the worker's rendered position, including pending restarts."""
+
+        with self._lock:
+            if self._start_requested or self._intro_requested:
+                return 0
+            renderer = self._renderer
+        return renderer.position_ticks
 
     @property
     def style_id(self) -> str:

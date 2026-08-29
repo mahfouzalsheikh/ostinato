@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from ostinato.computer_audio import (
     DEMO_STYLES,
+    TRANSPORT_TICKS_PER_BEAT,
     AlpinePolkaRenderer,
     BossaNovaRenderer,
     ClassicTangoRenderer,
@@ -233,6 +234,7 @@ class DemoArrangementRendererTests(unittest.TestCase):
 
         self.assertEqual(renderer.tempo_bpm, 60)
         self.assertAlmostEqual(renderer.beat_position, 1.5)
+        self.assertEqual(renderer.position_ticks, TRANSPORT_TICKS_PER_BEAT * 3 // 2)
 
     def test_main_pattern_uses_three_three_two_in_every_bar(self) -> None:
         self.assertEqual(DemoArrangementRenderer.BEATS_PER_BAR, 4.0)

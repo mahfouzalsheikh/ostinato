@@ -20,6 +20,7 @@ from ostinato.computer_audio import (
     DEMO_STYLES,
     LOW_C_NOTE,
     MIDDLE_C_NOTE,
+    TRANSPORT_TICKS_PER_BEAT,
     UPPER_C_NOTE,
     DemoAudioConfig,
     DemoSection,
@@ -343,6 +344,14 @@ class SoundFontArrangementRenderer:
     def section(self) -> DemoSection:
         self._advance_section(self._beat_at_frame(self._frame_position))
         return self._section
+
+    @property
+    def position_ticks(self) -> int:
+        """Return the rendered transport position as integer musical ticks."""
+
+        return round(
+            self._beat_at_frame(self._frame_position) * TRANSPORT_TICKS_PER_BEAT
+        )
 
     def set_tempo(self, tempo_bpm: int) -> None:
         if not MIN_TEMPO_BPM <= tempo_bpm <= MAX_TEMPO_BPM:

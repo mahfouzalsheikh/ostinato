@@ -84,6 +84,12 @@ Six original arrangements are available:
 - **Alpine Polka** — 2/4 at 124 BPM, with alternating root/fifth bass,
   offbeat chords, bright reed voicing, and a lively fourth-bar fill.
 
+The bar-position strip follows the backend audio transport. It renders one
+numbered light per quarter-note beat in the selected style (two for 2/4, three
+for 3/4, and four for 4/4), highlights beat one in amber, and interpolates
+between refreshed integer-tick transport samples so the display does not jump
+at the API polling interval.
+
 Each style has a varying four-bar main phrase, its own staged four-bar intro,
 and a four-bar ending with a final cadence. Instrument layers have independent
 stereo placement and bar-to-bar dynamics. The ending enters at the next bar

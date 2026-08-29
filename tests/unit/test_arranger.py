@@ -10,7 +10,7 @@ from ostinato.arranger import (
     classify_chord_notes,
     style_rhythm_spans,
 )
-from ostinato.computer_audio import DemoSection
+from ostinato.computer_audio import TRANSPORT_TICKS_PER_BEAT, DemoSection
 from ostinato.domain import ChordQuality, ChordState
 
 
@@ -24,6 +24,7 @@ class FakeArrangerAudio:
         self.ending_requests = 0
         self.device: str | None = None
         self.error: str | None = None
+        self.position_ticks: int | None = 0
 
     @property
     def section(self) -> DemoSection:
@@ -287,6 +288,29 @@ class LiveArrangerServiceTests(unittest.TestCase):
         self.assertEqual(status["tempo_bpm"], 96)
         self.assertEqual(status["beats_per_bar"], 3)
         self.assertEqual(self.audio.style, "classic_waltz")
+
+    def test_status_exposes_meter_aware_integer_transport_position(self) -> None:
+        self.arranger.command("start")
+        self.audio.position_ticks = (6 * TRANSPORT_TICKS_PER_BEAT) + 24
+
+        four_four = self.arranger.snapshot()
+        self.arranger.command("stop")
+        self.arranger.command("style", "classic_waltz")
+        self.arranger.command("start")
+        three_four = self.arranger.snapshot()
+
+        self.assertEqual(four_four["ticks_per_beat"], TRANSPORT_TICKS_PER_BEAT)
+        self.assertEqual(four_four["position_ticks"], 600)
+        self.assertEqual(four_four["beat_index"], 2)
+        self.assertEqual(three_four["beat_index"], 0)
+
+    def test_stopped_status_has_no_active_transport_beat(self) -> None:
+        self.audio.position_ticks = 2 * TRANSPORT_TICKS_PER_BEAT
+
+        status = self.arranger.snapshot()
+
+        self.assertIsNone(status["position_ticks"])
+        self.assertIsNone(status["beat_index"])
 
     def test_ending_and_panic_reach_audio_boundary(self) -> None:
         self.arranger.command("start")

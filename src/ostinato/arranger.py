@@ -20,6 +20,7 @@ from typing import Protocol, cast
 
 from ostinato.computer_audio import (
     DEMO_STYLES,
+    TRANSPORT_TICKS_PER_BEAT,
     AudioPlaybackError,
     DemoAudioConfig,
     DemoSection,
@@ -213,6 +214,10 @@ class ArrangerAudio(Protocol):
     def section(self) -> DemoSection:
         """Return the current rendered section."""
 
+    @property
+    def position_ticks(self) -> int | None:
+        """Return the rendered transport position in integer quarter-note ticks."""
+
     def select_style(self, style_id: str) -> None: ...
 
     def set_tempo(self, tempo_bpm: int) -> None: ...
@@ -270,6 +275,12 @@ class ProceduralArrangerAudio:
         if self._session is None:
             return DemoSection.STOPPED
         return self._session.section
+
+    @property
+    def position_ticks(self) -> int | None:
+        if self._session is None:
+            return None
+        return self._session.position_ticks
 
     @property
     def error(self) -> str | None:
@@ -546,6 +557,12 @@ class LiveArrangerService:
 
         definition = DEMO_STYLES[self._style_id]
         section = self._audio.section.value if self._running else "stopped"
+        position_ticks = self._audio.position_ticks if self._running else None
+        beat_index = (
+            (position_ticks // TRANSPORT_TICKS_PER_BEAT) % definition.beats_per_bar
+            if position_ticks is not None
+            else None
+        )
         if self._intro_armed and not self._running:
             section = "intro_armed"
         return {
@@ -565,6 +582,9 @@ class LiveArrangerService:
             "tempo_source": self._tempo_source,
             "tempo_mode": self._tempo_mode,
             "beats_per_bar": definition.beats_per_bar,
+            "ticks_per_beat": TRANSPORT_TICKS_PER_BEAT,
+            "position_ticks": position_ticks,
+            "beat_index": beat_index,
             "running": self._running,
             "section": section,
             "sync_enabled": self._sync_enabled,

@@ -6,8 +6,8 @@
     <meta name="theme-color" content="#080b0d" />
     <title>Ostinato Live Surface</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23080b0d'/%3E%3Ctext x='32' y='44' fill='%2365f6d1' font-size='40' text-anchor='middle'%3EO%3C/text%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="/assets/styles.css?v=12" />
-    <script type="module" src="/assets/app.js?v=15"></script>
+    <link rel="stylesheet" href="/assets/styles.css?v=13" />
+    <script type="module" src="/assets/app.js?v=16"></script>
   </head>
   <body>
     <header class="topbar">
@@ -115,6 +115,13 @@
             <strong id="arranger-chord">No chord</strong>
             <em id="arranger-meter">—</em>
           </div>
+        </div>
+        <div class="arranger-beat-position">
+          <div>
+            <span>Bar position</span>
+            <output id="arranger-beat-label">Ready · 4/4</output>
+          </div>
+          <ol id="arranger-beat-lights" aria-label="4/4 bar position, stopped"></ol>
         </div>
         <div class="arranger-controls" aria-label="Arranger transport controls">
           <button id="arranger-intro" class="arranger-button" type="button">

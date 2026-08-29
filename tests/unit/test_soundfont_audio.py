@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import unittest
 
-from ostinato.computer_audio import DEMO_STYLES, DemoAudioConfig, DemoSection
+from ostinato.computer_audio import (
+    DEMO_STYLES,
+    TRANSPORT_TICKS_PER_BEAT,
+    DemoAudioConfig,
+    DemoSection,
+)
 from ostinato.domain import ChordQuality, ChordState
 from ostinato.soundfont_audio import (
     DRUM_CHANNEL,
@@ -212,6 +217,13 @@ class SoundFontArrangementRendererTests(unittest.TestCase):
         self.assertTrue(
             all((channel, 123, 0) in engine.controls for channel in range(4))
         )
+
+    def test_rendered_position_is_reported_as_integer_ticks(self) -> None:
+        renderer, _ = self.create_renderer(tempo_bpm=60, sample_rate=100)
+
+        renderer.render(150, chord())
+
+        self.assertEqual(renderer.position_ticks, TRANSPORT_TICKS_PER_BEAT * 3 // 2)
 
     def test_intro_and_ending_keep_the_existing_four_bar_contract(self) -> None:
         renderer, _ = self.create_renderer(tempo_bpm=60, sample_rate=100)

@@ -59,12 +59,14 @@ class WebServerTests(unittest.TestCase):
         component = self.client.get("/assets/fr4x-accordion.js")
         surface_mapping = self.client.get("/assets/midi-surface.js")
         stradella = self.client.get("/assets/stradella.js")
+        arranger_clock = self.client.get("/assets/arranger-clock.js")
 
         self.assertEqual(index.status_code, 200)
         self.assertIn("<fr4x-accordion", index.text)
         self.assertEqual(component.status_code, 200)
         self.assertEqual(surface_mapping.status_code, 200)
         self.assertEqual(stradella.status_code, 200)
+        self.assertEqual(arranger_clock.status_code, 200)
         self.assertIn("PIANO_KEY_COUNT = 39", surface_mapping.text)
         self.assertIn("STRADELLA_ROW_COUNT = 6", stradella.text)
         self.assertIn("STRADELLA_COLUMN_COUNT = 20", stradella.text)
@@ -81,6 +83,8 @@ class WebServerTests(unittest.TestCase):
         self.assertIn('id="arranger-ending"', index.text)
         self.assertIn('id="arranger-tempo-mode"', index.text)
         self.assertIn('id="arranger-fixed-tempo"', index.text)
+        self.assertIn('id="arranger-beat-lights"', index.text)
+        self.assertIn('id="arranger-beat-label"', index.text)
         self.assertIn('id="audio-output-dialog"', index.text)
         self.assertIn('id="audio-output-select"', index.text)
         self.assertIn('id="test-audio-output"', index.text)
@@ -112,6 +116,8 @@ class WebServerTests(unittest.TestCase):
         self.assertTrue(all(style["description"] for style in initial.json()["styles"]))
         self.assertEqual(selected.json()["style"], "classic_waltz")
         self.assertEqual(selected.json()["tempo_bpm"], 96)
+        self.assertEqual(selected.json()["ticks_per_beat"], 96)
+        self.assertIsNone(selected.json()["beat_index"])
         self.assertIs(synced.json()["sync_enabled"], True)
 
     def test_arranger_fixed_tempo_control_validates_and_updates_status(self) -> None:
