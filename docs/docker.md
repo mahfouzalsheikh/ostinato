@@ -33,9 +33,10 @@ OSTINATO_WEB_BIND=0.0.0.0 docker compose up --build --detach
 
 Stop the service with `docker compose down`. See
 [web-interface.md](web-interface.md) for port selection and mapping behavior.
-The guided MIDI profile is stored in the Compose-managed `ostinato-state`
-volume and survives normal container replacement and `docker compose down`.
-Running `docker compose down --volumes` also deletes that saved profile.
+The guided MIDI profile and selected accompaniment audio output are stored in
+the Compose-managed `ostinato-state` volume and survive normal
+container replacement and `docker compose down`. Running
+`docker compose down --volumes` also deletes those saved settings.
 
 ## Diagnose and run one-off commands
 
@@ -69,9 +70,31 @@ The audible demo uses ALSA through the passed `/dev/snd` tree:
 docker compose run --rm ostinato keyboard --play
 ```
 
-Whether the host's default ALSA route is usable inside the container remains a
-hardware-assisted check. Desktop PipeWire routing is not mounted into this
-container; direct ALSA device access is the initial container path.
+The web interface lists host desktop sinks reported by PipeWire, including
+connected Bluetooth audio, plus direct `plughw` routes reported by `aplay -L`.
+It lets the performer play a bounded test chord and saves only the selected
+identifier. It never substitutes another device when the saved route is
+missing.
+
+Compose mounts `${XDG_RUNTIME_DIR}/pipewire-0` read/write at a private
+container path. Run Compose from the logged-in desktop user's session so
+`XDG_RUNTIME_DIR` identifies the PipeWire session. The mount exposes audio
+routing control and playback to the container; it does not expose unrelated
+files from the runtime directory. Direct ALSA remains available as a fallback.
+
+## Sampled accompaniment engine
+
+The runtime package installs FluidSynth and the Debian `timgm6mb-soundfont`
+dependency. Compose passes the package-owned
+`/usr/share/sounds/sf2/TimGM6mb.sf2` path explicitly through
+`OSTINATO_SOUNDFONT`; Ostinato does not search for or silently choose a
+different file. TimGM6mb is distributed under GPL-2 according to the package
+copyright metadata.
+
+When this configured file is present, the six arrangements use native
+FluidSynth voices for bass, piano or guitar, accordion or reed, strings, and
+General MIDI drums. Without the variable, the deterministic procedural PCM
+renderer remains available for development and hardware-free tests.
 
 ## USB and device-access boundary
 

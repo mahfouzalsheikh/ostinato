@@ -1,4 +1,4 @@
-export const PIANO_KEY_COUNT = 37;
+export const PIANO_KEY_COUNT = 39;
 export const PIANO_FIRST_PITCH_CLASS = 5; // F, matching the physical shape.
 
 export function inferPianoBase(notes) {

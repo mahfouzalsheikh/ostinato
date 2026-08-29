@@ -2,13 +2,11 @@ schema_version: 1
 tempo_bpm: 120
 planner_lookahead_ms: 20
 
-# These controls are reserved for later milestones. No key is connected to a
-# live action in P0.
+# Reference bindings implemented by the web arranger. Loading this file into
+# the runtime remains a later configuration milestone.
 controls:
-  start_stop: space
-  panic: escape
-  tempo_up: plus
-  tempo_down: minus
-  fill: f
+  intro: i
+  start: enter
+  stop: space
   ending: e
-
+  left_hand_sync: s

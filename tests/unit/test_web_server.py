@@ -7,6 +7,11 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
+from ostinato.audio_output import (
+    AudioOutputDevice,
+    AudioOutputService,
+    AudioOutputStore,
+)
 from ostinato.midi_profile import MidiProfileStore
 from ostinato.realtime_midi import MidiService
 from ostinato.web_server import create_app
@@ -21,7 +26,27 @@ class WebServerTests(unittest.TestCase):
         self.profile_store = MidiProfileStore(
             Path(self.temporary.name) / "midi-profile.json"
         )
-        self.client_context = TestClient(create_app(self.service, self.profile_store))
+        self.tested_audio_outputs: list[str] = []
+        self.audio_output_store = AudioOutputStore(
+            Path(self.temporary.name) / "audio-output.json"
+        )
+        self.audio_output_service = AudioOutputService(
+            self.audio_output_store,
+            discover=lambda: [
+                AudioOutputDevice(
+                    "plughw:CARD=Test,DEV=0",
+                    "Test USB Audio · Analog Stereo",
+                )
+            ],
+            test=self.tested_audio_outputs.append,
+        )
+        self.client_context = TestClient(
+            create_app(
+                self.service,
+                self.profile_store,
+                audio_output_service=self.audio_output_service,
+            )
+        )
         self.client = self.client_context.__enter__()
 
     def tearDown(self) -> None:
@@ -40,7 +65,7 @@ class WebServerTests(unittest.TestCase):
         self.assertEqual(component.status_code, 200)
         self.assertEqual(surface_mapping.status_code, 200)
         self.assertEqual(stradella.status_code, 200)
-        self.assertIn("PIANO_KEY_COUNT = 37", surface_mapping.text)
+        self.assertIn("PIANO_KEY_COUNT = 39", surface_mapping.text)
         self.assertIn("STRADELLA_ROW_COUNT = 6", stradella.text)
         self.assertIn("STRADELLA_COLUMN_COUNT = 20", stradella.text)
         self.assertIn("inferPianoBase", surface_mapping.text)
@@ -51,6 +76,101 @@ class WebServerTests(unittest.TestCase):
         self.assertNotIn("User-trained bindings", index.text)
         self.assertIn('id="midi-wizard"', index.text)
         self.assertIn("Perform one labeled part at a time", index.text)
+        self.assertIn('id="arranger-style"', index.text)
+        self.assertIn('id="arranger-intro"', index.text)
+        self.assertIn('id="arranger-ending"', index.text)
+        self.assertIn('id="arranger-tempo-mode"', index.text)
+        self.assertIn('id="arranger-fixed-tempo"', index.text)
+        self.assertIn('id="audio-output-dialog"', index.text)
+        self.assertIn('id="audio-output-select"', index.text)
+        self.assertIn('id="test-audio-output"', index.text)
+        self.assertNotIn("Configure the sound module", index.text)
+
+    def test_arranger_catalog_and_safe_stopped_controls_are_available(self) -> None:
+        initial = self.client.get("/api/arranger/status")
+        selected = self.client.post(
+            "/api/arranger/command",
+            json={"action": "style", "value": "classic_waltz"},
+        )
+        synced = self.client.post(
+            "/api/arranger/command",
+            json={"action": "sync", "value": True},
+        )
+
+        self.assertEqual(initial.status_code, 200)
+        self.assertEqual(
+            [style["id"] for style in initial.json()["styles"]],
+            [
+                "modern_tango",
+                "classic_tango",
+                "classic_waltz",
+                "bossa_nova",
+                "swing_foxtrot",
+                "alpine_polka",
+            ],
+        )
+        self.assertTrue(all(style["description"] for style in initial.json()["styles"]))
+        self.assertEqual(selected.json()["style"], "classic_waltz")
+        self.assertEqual(selected.json()["tempo_bpm"], 96)
+        self.assertIs(synced.json()["sync_enabled"], True)
+
+    def test_arranger_fixed_tempo_control_validates_and_updates_status(self) -> None:
+        fixed = self.client.post(
+            "/api/arranger/command",
+            json={"action": "tempo", "value": 134},
+        )
+        invalid = self.client.post(
+            "/api/arranger/command",
+            json={"action": "tempo", "value": 300},
+        )
+        automatic = self.client.post(
+            "/api/arranger/command",
+            json={"action": "tempo_mode", "value": "bass_auto"},
+        )
+
+        self.assertEqual(fixed.status_code, 200)
+        self.assertEqual(fixed.json()["tempo_bpm"], 134)
+        self.assertEqual(fixed.json()["tempo_mode"], "fixed")
+        self.assertEqual(invalid.status_code, 409)
+        self.assertEqual(automatic.json()["tempo_mode"], "bass_auto")
+
+    def test_audio_output_is_discovered_tested_and_saved_by_exact_id(self) -> None:
+        available = self.client.get("/api/audio/outputs")
+        blocked_start = self.client.post(
+            "/api/arranger/command", json={"action": "start"}
+        )
+        tested = self.client.post(
+            "/api/audio/test", json={"device": "plughw:CARD=Test,DEV=0"}
+        )
+        saved = self.client.put(
+            "/api/audio/output", json={"device": "plughw:CARD=Test,DEV=0"}
+        )
+
+        self.assertEqual(available.status_code, 200)
+        self.assertEqual(
+            available.json()["devices"],
+            [
+                {
+                    "id": "plughw:CARD=Test,DEV=0",
+                    "name": "Test USB Audio · Analog Stereo",
+                }
+            ],
+        )
+        self.assertEqual(blocked_start.status_code, 409)
+        self.assertEqual(tested.status_code, 200)
+        self.assertEqual(self.tested_audio_outputs, ["plughw:CARD=Test,DEV=0"])
+        self.assertIs(saved.json()["available"], True)
+        status = self.client.get("/api/arranger/status").json()
+        self.assertEqual(status["output_mode"], "host_analog_audio")
+        self.assertIs(status["output_configured"], True)
+
+    def test_audio_output_rejects_identifier_not_in_current_discovery(self) -> None:
+        response = self.client.put(
+            "/api/audio/output", json={"device": "plughw:CARD=Missing,DEV=0"}
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("not currently available", response.json()["detail"])
 
     def test_guided_detection_uses_only_submitted_observations(self) -> None:
         response = self.client.post(
@@ -87,6 +207,9 @@ class WebServerTests(unittest.TestCase):
         self.assertEqual(saved.status_code, 200)
         self.assertIn("saved_at", saved.json())
         self.assertEqual(loaded.json(), saved.json())
+        arranger = self.client.get("/api/arranger/status").json()
+        self.assertEqual(arranger["bass_channel"], 3)
+        self.assertEqual(arranger["chord_channel"], 12)
         self.assertEqual(self.client.delete("/api/midi/profile").status_code, 204)
         self.assertIsNone(self.client.get("/api/midi/profile").json())
 

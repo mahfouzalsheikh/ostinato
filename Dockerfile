@@ -30,12 +30,14 @@ ENV PATH="/app/.venv/bin:${PATH}" \
 
 WORKDIR /app
 
-# ALSA tools drive/probe host sound devices, FluidSynth is the planned synth,
-# and usbutils makes the explicitly passed-through USB bus inspectable.
+# ALSA tools drive/probe direct host devices, PipeWire tools reach desktop and
+# Bluetooth sinks through the explicitly mounted user-session socket,
+# FluidSynth is the planned synth, and usbutils makes USB inspectable.
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
         alsa-utils \
         fluidsynth \
+        pipewire-bin \
         usbutils \
     && rm -rf /var/lib/apt/lists/*
 

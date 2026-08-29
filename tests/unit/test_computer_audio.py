@@ -4,11 +4,18 @@ import io
 import math
 import unittest
 from array import array
+from unittest.mock import patch
 
 from ostinato.computer_audio import (
+    DEMO_STYLES,
+    AlpinePolkaRenderer,
+    BossaNovaRenderer,
+    ClassicTangoRenderer,
+    ClassicWaltzRenderer,
     DemoArrangementRenderer,
     DemoAudioConfig,
     DemoSection,
+    SwingFoxtrotRenderer,
     run_audible_keyboard,
 )
 from ostinato.domain import ChordQuality, ChordState
@@ -46,6 +53,91 @@ class DemoArrangementRendererTests(unittest.TestCase):
     def test_demo_identifies_its_original_style(self) -> None:
         self.assertEqual(DemoArrangementRenderer.STYLE_NAME, "modern_tango")
         self.assertEqual(DemoArrangementRenderer.OUTPUT_MODE, "procedural_pcm")
+
+    def test_catalog_contains_six_distinct_original_styles(self) -> None:
+        self.assertEqual(
+            set(DEMO_STYLES),
+            {
+                "modern_tango",
+                "classic_tango",
+                "classic_waltz",
+                "bossa_nova",
+                "swing_foxtrot",
+                "alpine_polka",
+            },
+        )
+        self.assertEqual(DEMO_STYLES["modern_tango"].beats_per_bar, 4)
+        self.assertEqual(DEMO_STYLES["classic_tango"].beats_per_bar, 4)
+        self.assertEqual(DEMO_STYLES["classic_waltz"].beats_per_bar, 3)
+        self.assertEqual(DEMO_STYLES["alpine_polka"].beats_per_bar, 2)
+        self.assertTrue(all(style.description for style in DEMO_STYLES.values()))
+
+        config = DemoAudioConfig()
+        rendered = {
+            definition.renderer(config).render(8_000, chord(0))
+            for definition in DEMO_STYLES.values()
+        }
+
+        self.assertEqual(len(rendered), len(DEMO_STYLES))
+
+    def test_every_style_has_a_valid_four_bar_phrase(self) -> None:
+        for definition in DEMO_STYLES.values():
+            renderer = definition.renderer
+            with self.subTest(style=definition.id):
+                self.assertEqual(len(renderer._GROOVE), 4)
+                self.assertEqual(len(renderer._PHRASE_DYNAMICS), 4)
+                for groove in renderer._GROOVE:
+                    self.assertEqual(
+                        len(groove.bass_onsets), len(groove.bass_intervals)
+                    )
+                    for onsets in (
+                        groove.bass_onsets,
+                        groove.chord_onsets,
+                        groove.kick_onsets,
+                        groove.snare_onsets,
+                        groove.auxiliary_onsets,
+                    ):
+                        self.assertTrue(
+                            all(
+                                0.0 <= onset < renderer.BEATS_PER_BAR
+                                for onset in onsets
+                            )
+                        )
+
+    def test_each_style_intro_and_ending_span_four_bars(self) -> None:
+        renderers = (
+            DemoArrangementRenderer,
+            ClassicTangoRenderer,
+            ClassicWaltzRenderer,
+            BossaNovaRenderer,
+            SwingFoxtrotRenderer,
+            AlpinePolkaRenderer,
+        )
+        for renderer_type in renderers:
+            with self.subTest(style=renderer_type.STYLE_NAME):
+                renderer = renderer_type(DemoAudioConfig(tempo_bpm=60, sample_rate=100))
+                section_frames = round(renderer_type.BEATS_PER_BAR * 4 * 100)
+                renderer.start_intro()
+                renderer.render(section_frames, chord(0))
+                self.assertEqual(renderer.section, DemoSection.MAIN)
+
+                renderer.request_ending()
+                renderer.render(round(renderer_type.BEATS_PER_BAR * 100), chord(0))
+                self.assertEqual(renderer.section, DemoSection.ENDING)
+                renderer.render(section_frames, chord(0))
+                self.assertEqual(renderer.section, DemoSection.STOPPED)
+
+    def test_waltz_intro_and_ending_each_span_four_three_beat_bars(self) -> None:
+        renderer = ClassicWaltzRenderer(DemoAudioConfig(tempo_bpm=60, sample_rate=100))
+        renderer.start_intro()
+        renderer.render(1_200, chord(0))
+        self.assertEqual(renderer.section, DemoSection.MAIN)
+
+        renderer.request_ending()
+        renderer.render(300, chord(0))
+        self.assertEqual(renderer.section, DemoSection.ENDING)
+        renderer.render(1_200, chord(0))
+        self.assertEqual(renderer.section, DemoSection.STOPPED)
 
     def test_mastered_pcm_is_loud_without_reaching_integer_full_scale(self) -> None:
         renderer = DemoArrangementRenderer(DemoAudioConfig())
@@ -86,6 +178,13 @@ class DemoArrangementRendererTests(unittest.TestCase):
         self.assertEqual(first_pcm, second_pcm)
         self.assertNotEqual(first_pcm, bytes(len(first_pcm)))
 
+    def test_instrument_panning_produces_a_real_stereo_field(self) -> None:
+        pcm = array(
+            "h", DemoArrangementRenderer(DemoAudioConfig()).render(8_000, chord(0))
+        )
+
+        self.assertNotEqual(pcm[::2], pcm[1::2])
+
     def test_root_and_quality_change_the_rendered_harmony(self) -> None:
         config = DemoAudioConfig()
         c_major = DemoArrangementRenderer(config).render(24_000, chord(0))
@@ -94,6 +193,26 @@ class DemoArrangementRendererTests(unittest.TestCase):
         )
 
         self.assertNotEqual(c_major, g_minor)
+
+    def test_procedural_string_register_preserves_the_chord_pitch_classes(
+        self,
+    ) -> None:
+        renderer = DemoArrangementRenderer(DemoAudioConfig())
+        observed_notes: list[int] = []
+
+        def frequency(note: int) -> float:
+            observed_notes.append(note)
+            return 440.0
+
+        with patch.object(renderer, "_midi_frequency", side_effect=frequency):
+            renderer._render_strings(
+                frame=0,
+                chord=chord(8),
+                bar_phase=0.0,
+                final_ending_bar=False,
+            )
+
+        self.assertEqual({note % 12 for note in observed_notes}, {0, 3, 8})
 
     def test_reset_returns_the_transport_to_the_same_bar_start(self) -> None:
         renderer = DemoArrangementRenderer(DemoAudioConfig())
@@ -121,6 +240,51 @@ class DemoArrangementRendererTests(unittest.TestCase):
         self.assertEqual(sum(DemoArrangementRenderer.SYNCOPATION_GROUPS), 4.0)
         self.assertEqual(DemoArrangementRenderer._BASS_ONSETS, (0.0, 1.5, 3.0))
         self.assertEqual(DemoArrangementRenderer._CHORD_ONSETS, (0.5, 2.0, 3.5))
+
+    def test_classic_tango_uses_marcato_and_sincopa_without_drum_kit(self) -> None:
+        first, second, third, _ = ClassicTangoRenderer._GROOVE
+
+        self.assertEqual(first.bass_onsets, (0.0, 1.0, 2.0, 3.0))
+        self.assertEqual(second.bass_onsets, (0.0, 2.0))
+        self.assertEqual(third.bass_onsets, (0.0, 1.5, 2.0, 3.5))
+        self.assertTrue(
+            all(groove.hat_onsets == () for groove in ClassicTangoRenderer._GROOVE)
+        )
+        self.assertEqual(ClassicTangoRenderer._MAIN_LEVELS.drums, 0.0)
+
+    def test_bossa_separates_steady_bass_from_two_bar_syncopated_comping(self) -> None:
+        first, second, *_ = BossaNovaRenderer._GROOVE
+
+        self.assertEqual(first.bass_onsets, (0.0, 2.0))
+        self.assertEqual(first.bass_roles, ("root", "fifth"))
+        self.assertNotEqual(first.chord_onsets, second.chord_onsets)
+        self.assertEqual(first.reed_onsets, ())
+        self.assertEqual(first.pad_onsets, ())
+
+    def test_swing_walk_uses_quality_aware_safe_chord_tones(self) -> None:
+        first = SwingFoxtrotRenderer._GROOVE[0]
+
+        self.assertEqual(first.bass_onsets, (0.0, 1.0, 2.0, 3.0))
+        self.assertEqual(first.bass_roles, ("root", "third", "fifth", "color"))
+        self.assertEqual(
+            SwingFoxtrotRenderer._bass_role_interval(ChordQuality.MINOR, "third"),
+            3,
+        )
+        self.assertEqual(
+            SwingFoxtrotRenderer._bass_role_interval(ChordQuality.MINOR, "color"),
+            12,
+        )
+        self.assertEqual(
+            SwingFoxtrotRenderer._bass_role_interval(
+                ChordQuality.DOMINANT_SEVENTH, "color"
+            ),
+            10,
+        )
+
+    def test_polka_preserves_bass_then_upbeat_chord_oom_pah(self) -> None:
+        for groove in AlpinePolkaRenderer._GROOVE[:3]:
+            self.assertEqual(groove.bass_onsets, (0.0, 1.0))
+            self.assertEqual(groove.chord_onsets, (0.5, 1.5))
 
     def test_four_measure_intro_transitions_to_main(self) -> None:
         renderer = DemoArrangementRenderer(

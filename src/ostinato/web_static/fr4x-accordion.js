@@ -2,7 +2,7 @@ import {
   PIANO_FIRST_PITCH_CLASS,
   PIANO_KEY_COUNT,
   inferPianoBase,
-} from "./midi-surface.js";
+} from "./midi-surface.js?v=11";
 import {
   STRADELLA_COLUMN_COUNT,
   STRADELLA_ROW_COUNT,
@@ -277,9 +277,9 @@ template.innerHTML = `
     button:focus-visible { outline: 2px solid #65f6d1; outline-offset: 1px; }
   </style>
   <div class="instrument">
-    <section class="end right-end" aria-label="37-key right-hand piano keyboard">
+    <section class="end right-end" aria-label="39-key right-hand piano keyboard">
       <div class="control-deck" aria-hidden="true">
-        <div class="deck-top"><span>Right hand</span><div class="screen">LIVE MIDI</div><span>37 keys</span></div>
+        <div class="deck-top"><span>Right hand</span><div class="screen">LIVE MIDI</div><span>39 keys · F–G</span></div>
         <div class="deck-controls"></div>
       </div>
       <div class="piano"></div>
@@ -334,8 +334,8 @@ export class Fr4xAccordion extends HTMLElement {
   #buildPiano() {
     const piano = this.shadowRoot.querySelector(".piano");
     if (piano.childElementCount) return;
-    // The visual starts on F to reproduce the 22-white/15-black physical
-    // pattern visible on the 37-key instrument. It assigns no MIDI note.
+    // The local instrument was observed from F through the upper G. The
+    // visual assigns no MIDI note until the saved treble profile is applied.
     for (let index = 0; index < PIANO_KEY_COUNT; index += 1) {
       const pitchClass = (PIANO_FIRST_PITCH_CLASS + index) % 12;
       const black = BLACK_PITCH_CLASSES.has(pitchClass);

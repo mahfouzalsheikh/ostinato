@@ -5,10 +5,10 @@ Roland FR-4X V-Accordion. The accordion's analog audio remains connected
 directly to the mixer; the computer produces accompaniment only.
 
 The repository currently implements milestone **P0**, a hardware-free
-computer-keyboard chord source, an experimental audible arranger demo, and a
-real-time web/MIDI surface foundation. The web interface monitors raw MIDI and
-uses explicit, browser-local mappings; FR-4X recording and production chord
-recognition still wait for representative hardware captures.
+computer-keyboard chord source, an experimental six-style audible arranger,
+and a real-time web/MIDI surface. The guided setup saves reviewed input roles;
+FR-4X recording and production chord recognition still wait for representative
+hardware captures.
 
 ## Quick start
 
@@ -76,8 +76,18 @@ For host development without Docker:
 pipenv run ostinato web
 ```
 
-See the [real-time web interface guide](docs/web-interface.md) before mapping
-physical FR-4X events or sending simulator MIDI.
+The web page also provides backend-owned arranger controls for six original
+arrangements: Modern Tango, Classic Tango, Classic Waltz, Bossa Nova, Swing
+Foxtrot, and Alpine Polka. Docker uses the installed GPL-licensed TimGM6mb
+SoundFont through native FluidSynth; hosts without a configured SoundFont
+retain the procedural PCM fallback. Each style has a four-bar phrase,
+orchestrated intro and ending, rhythmic fills, combined bass/chord tempo
+tracking, and left-hand sync. Choose **Audio output**
+to test and save an exact host PipeWire sink (including Bluetooth) or direct
+ALSA route. Ostinato synthesizes accompaniment on that route for an analog
+connection to the mixer; the accordion keeps its own direct analog mixer
+connection and is used only as arranger MIDI input. See the
+[real-time web interface guide](docs/web-interface.md).
 
 ## Documentation
 
@@ -103,12 +113,13 @@ commit personal device names or an unverified FR-4X mapping as shared defaults.
 - Implemented: OST-001 through OST-003 (P0 software slice).
 - Pending hardware: FluidSynth playback/endurance observation and FR-4X capture.
 - Available without accordion hardware: explicit computer-keyboard chord-state
-  input, an experimental built-in accompaniment through the default host audio
+  input, experimental built-in accompaniments through a selected host audio
   route, and the web surface with fake-backend automated tests.
-- Available with user-selected ports: raw MIDI monitoring/output, a 37-key
-  piano surface, and a user-trained 120-button left-hand surface.
-- Intentionally absent: FR-4X chord recognition, the production style
-  loader/planner/dispatcher and FluidSynth path, authenticated remote access,
+- Available with user-selected ports: raw MIDI monitoring/output, a 39-key
+  piano surface, a two-bass-row Stradella display, and six computer-generated
+  accompaniment styles through an explicitly selected host audio output.
+- Intentionally absent: hardware-validated FR-4X chord recognition, a general
+  style-v1 loader, program/register automation, authenticated remote access,
   and Pi services.
 
 The complete milestone sequence and acceptance criteria are in

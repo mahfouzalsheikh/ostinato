@@ -2,8 +2,9 @@
 
 The web interface is a live raw-MIDI monitor and simulator foundation. It uses
 native browser Web Components and a FastAPI/WebSocket service; no frontend
-build step is required. The visual surface follows the official FR-4X physical
-counts of [37 right-hand keys and 120 left-hand buttons](https://www.roland.com/global/products/fr-4x/specifications/).
+build step is required. The local right-hand projection spans the
+performer-observed F through upper G (39 key positions), and the left-hand
+surface has 120 buttons.
 
 It does **not** contain a default FR-4X MIDI mapping. The instrument supports
 multiple bass/chord and free-bass layouts, and the project has not completed
@@ -43,11 +44,110 @@ is reported and never replaced with a different device automatically. The
 input can still reconnect when an optional saved output is absent. Run the
 wizard again after changing the instrument's MIDI transmission setup.
 
-## Visualize the 37-key piano surface
+## Control the live arranger
+
+The arranger panel controls a backend-owned PCM accompaniment process.
+Reloading or closing the browser does not stop a running arrangement. The
+accordion remains the MIDI input and keeps sending its own analog voice
+directly to the mixer. Ostinato synthesizes accompaniment through a separate
+computer or USB-interface analog output connected to another mixer input.
+
+Choose **Audio output** before playback:
+
+1. Select one exact host PipeWire sink (including connected Bluetooth audio)
+   or a direct `plughw` PCM identifier reported inside the service container.
+2. Play the bounded C-major test chord and confirm it reaches the intended
+   mixer input.
+3. Save the selection. On restart, Ostinato restores it only when the same
+   identifier is still present; it never chooses a replacement automatically.
+
+The web arranger does not require FR-4X External Seq. Playback and sends no
+arranger MIDI back to the accordion. The optional MIDI output selected in the
+MIDI wizard remains only for pressing notes on the browser simulator.
+
+Six original arrangements are available:
+
+- **Modern Tango** — 4/4 at 120 BPM, with a dramatic 3+3+2 foundation,
+  changing bass movement, syncopated piano/reed voicings, strings, and a
+  fourth-bar percussion fill;
+- **Classic Tango** — 4/4 at 120 BPM, alternating traditional marcato in four,
+  marcato in two, and sincopa gestures across acoustic bass, piano, bandoneon,
+  and short string attacks without a generic drum kit;
+- **Classic Waltz** — 3/4 at 96 BPM, with true bass-on-one and chordal
+  oom-pah-pah responses, rising inversions, orchestral dynamics, and a turn
+  into the fourth bar;
+- **Bossa Nova** — 4/4 at 116 BPM, with steady root/fifth bass on beats one
+  and three, independent two-bar syncopated comping, cross-stick accents, and
+  a restrained straight-eighth timekeeper;
+- **Swing Foxtrot** — 4/4 at 132 BPM, with four-beat walking bass lines,
+  offbeat chord stabs, a swung ride-like pulse, and a compact turnaround;
+- **Alpine Polka** — 2/4 at 124 BPM, with alternating root/fifth bass,
+  offbeat chords, bright reed voicing, and a lively fourth-bar fill.
+
+Each style has a varying four-bar main phrase, its own staged four-bar intro,
+and a four-bar ending with a final cadence. Instrument layers have independent
+stereo placement and bar-to-bar dynamics. The ending enters at the next bar
+and stops after its final bar. Stop playback before changing style. These are
+original hard-coded arrangements, not style-v1 files or proprietary imports.
+In Docker, their parts are rendered with sampled General MIDI instruments from
+the package-provided TimGM6mb SoundFont through native FluidSynth. The older
+procedural PCM renderer remains a fallback when no SoundFont is configured.
+The genre patterns are original, source-informed arrangements; provenance and
+the specific rhythmic principles are recorded in
+`docs/evidence/w16-source-informed-styles.md`.
+
+The controls and computer-key equivalents are:
+
+| Control | Key | Behavior |
+| --- | --- | --- |
+| Intro | `I` | Start the intro, or arm it when left-hand sync is enabled |
+| Start | `Enter` | Start the main section from its first bar |
+| Stop | `Space` | Stop accompaniment immediately |
+| Ending | `E` | Arm the ending for the next bar |
+| Left-hand sync | `S` | Toggle automatic start and inactivity stop |
+
+Keyboard shortcuts are ignored while a form control or either setup dialog has
+focus.
+
+In **Left-hand auto** mode, the service fuses note-on attacks from both saved
+bass and chord channels. A multi-note chord cluster counts as one attack, and
+near-simultaneous bass/chord messages are rejected as duplicate timing pulses.
+The detector derives possible rhythmic gaps from the selected style's bass and
+chord patterns, then requires at least three mutually consistent normalized
+intervals. A median/inlier filter rejects isolated timing errors, and later
+tempo changes move by at most three BPM per accepted observation rather than
+jumping. This lets alternating bass/chord movement, bass-only movement, or
+chord-only movement establish tempo without interpreting every MIDI note in a
+chord as a separate beat.
+
+Choose **Fixed** to stop left-hand attacks from changing tempo. Drag the rotary
+control or focus it and use the arrow keys to choose an exact value from 40 to
+240 BPM. Switching back to **Left-hand auto** resets the timing sample while
+keeping the current tempo as the interpretation reference.
+
+Chord clusters settle six milliseconds after their first note, and the
+backend checks due clusters every five milliseconds. Each new attack is
+classified from its own note-on cluster, so lingering note-offs from the prior
+chord do not delay or corrupt the next harmony. A new bass note immediately
+updates the accompaniment bass voice; when it differs from the chord root the
+harmony readout uses slash notation such as `C/G`.
+
+Left-hand sync starts on detected bass or chord activity. It stops after two
+complete bars without another left-hand note-on, using the selected style's
+meter and current tempo. The grace period prevents ordinary detached bass
+playing from stopping accompaniment between strokes.
+
+Chord-channel events are grouped for 12 ms and decoded using normal chord-note
+clusters or the documented FR-4X D-Mode ranges. The service uses only the bass
+and chord channels reviewed in the saved setup profile. Representative H1
+fixtures and physical musical-feel verification remain pending, so this is not
+yet production FR-4X recognition evidence.
+
+## Visualize the 39-key piano surface
 
 The saved treble channel and observed note set drive the piano directly; there
-is no separate mapping form. The visual keyboard has the physical 37-key F-to-F
-pitch-class shape. Ostinato selects an F-aligned 37-note MIDI window containing
+is no separate mapping form. The visual keyboard has the locally observed
+39-key F-to-G pitch-class shape. Ostinato selects an F-aligned 39-note MIDI window containing
 the observed treble notes and centers incomplete samples within that window.
 This prevents an arbitrary lowest sampled note from shifting every displayed
 pitch. Playing the physical lowest and highest keys during setup removes octave
@@ -88,8 +188,9 @@ layout choice before their different row geometry can be displayed safely.
 - Each browser has a bounded queue; when a slow display fills its queue, the
   oldest display event is discarded rather than blocking MIDI input.
 - Browser output accepts only complete, validated MIDI messages.
-- A browser disconnect or output-port change releases notes that the web
-  simulator started, preventing those lifecycle events from being abandoned.
+- Stop, panic, audio-output change, output failure, and shutdown stop or close
+  the arranger PCM stream. A browser disconnect also releases MIDI notes that
+  its simulator started.
 - The WebSocket display is best-effort and is not the accompaniment scheduler.
 - No browser timing result is accepted as MIDI/audio latency evidence.
 - The web service has no authentication or TLS. Keep the default loopback bind
@@ -109,6 +210,11 @@ layout choice before their different row geometry can be displayed safely.
 | `GET /api/midi/profile` | Load the saved, versioned detection profile |
 | `PUT /api/midi/profile` | Validate and atomically save a reviewed profile |
 | `DELETE /api/midi/profile` | Remove the saved profile |
+| `GET /api/arranger/status` | Style, tempo, harmony, section, and sync state |
+| `POST /api/arranger/command` | Apply one validated local arranger control |
+| `GET /api/audio/outputs` | List exact PipeWire/direct-ALSA routes and saved state |
+| `PUT /api/audio/output` | Validate and atomically save one exact PCM route |
+| `POST /api/audio/test` | Play one bounded test chord through an exact discovered route |
 | `WS /ws/midi` | Status, input/output events, and real-time commands |
 
 The API is intentionally local and unauthenticated in this milestone.

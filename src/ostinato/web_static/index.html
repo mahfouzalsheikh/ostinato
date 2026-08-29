@@ -6,8 +6,8 @@
     <meta name="theme-color" content="#080b0d" />
     <title>Ostinato Live Surface</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23080b0d'/%3E%3Ctext x='32' y='44' fill='%2365f6d1' font-size='40' text-anchor='middle'%3EO%3C/text%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="/assets/styles.css" />
-    <script type="module" src="/assets/app.js"></script>
+    <link rel="stylesheet" href="/assets/styles.css?v=12" />
+    <script type="module" src="/assets/app.js?v=15"></script>
   </head>
   <body>
     <header class="topbar">
@@ -73,10 +73,75 @@
         </p>
       </section>
 
+      <section class="panel arranger-panel" aria-labelledby="arranger-title">
+        <div class="arranger-heading">
+          <div>
+            <p class="eyebrow">Backend accompaniment engine</p>
+            <h2 id="arranger-title">Live arranger</h2>
+          </div>
+          <div class="arranger-heading-actions">
+            <div class="arranger-live-state" aria-live="polite">
+              <i id="arranger-led"></i>
+              <span id="arranger-section">Stopped</span>
+            </div>
+            <button id="open-audio-output" class="secondary-button" type="button">
+              Audio output
+            </button>
+          </div>
+        </div>
+        <div class="arranger-grid">
+          <label class="style-control">
+            <span>Style</span>
+            <select id="arranger-style" aria-label="Arranger style"></select>
+          </label>
+          <div class="tempo-display">
+            <span>Current tempo</span>
+            <strong><output id="arranger-tempo">—</output> <small>BPM</small></strong>
+            <em id="arranger-tempo-source">Waiting for setup</em>
+          </div>
+          <div class="tempo-control">
+            <div class="tempo-control-heading">
+              <span>Tempo control</span>
+              <button id="arranger-tempo-mode" type="button" aria-pressed="false">Left-hand auto</button>
+            </div>
+            <label class="tempo-knob-control">
+              <span class="tempo-knob" id="tempo-knob" aria-hidden="true"><i></i></span>
+              <input id="arranger-fixed-tempo" type="range" min="40" max="240" value="120" step="1" disabled />
+              <strong><output id="arranger-fixed-tempo-value">120</output><small>BPM fixed</small></strong>
+            </label>
+          </div>
+          <div class="arranger-readout">
+            <span>Harmony</span>
+            <strong id="arranger-chord">No chord</strong>
+            <em id="arranger-meter">—</em>
+          </div>
+        </div>
+        <div class="arranger-controls" aria-label="Arranger transport controls">
+          <button id="arranger-intro" class="arranger-button" type="button">
+            <span>Intro</span><kbd>I</kbd>
+          </button>
+          <button id="arranger-start" class="arranger-button primary" type="button">
+            <span>Start</span><kbd>Enter</kbd>
+          </button>
+          <button id="arranger-stop" class="arranger-button" type="button">
+            <span>Stop</span><kbd>Space</kbd>
+          </button>
+          <button id="arranger-ending" class="arranger-button" type="button">
+            <span>Ending</span><kbd>E</kbd>
+          </button>
+          <button id="arranger-sync" class="arranger-button sync" type="button" aria-pressed="false">
+            <span>Left-hand sync</span><kbd>S</kbd>
+          </button>
+        </div>
+        <p id="arranger-message" class="inline-message" aria-live="polite">
+          Select a style, then start manually or enable left-hand sync.
+        </p>
+      </section>
+
       <section class="surface-section" aria-labelledby="surface-title">
         <div class="surface-heading">
           <div>
-            <p class="eyebrow">37 keys / 120 buttons</p>
+            <p class="eyebrow">39 keys / 120 buttons</p>
             <h2 id="surface-title">Accordion surface</h2>
           </div>
           <div class="surface-legend">
@@ -202,6 +267,39 @@
           <footer class="wizard-actions">
             <button id="repeat-detection" class="secondary-button" type="button">Repeat detection</button>
             <button id="save-midi-profile" class="primary-button" type="button">Save MIDI profile</button>
+          </footer>
+        </section>
+      </form>
+    </dialog>
+
+    <dialog id="audio-output-dialog" class="wizard-dialog audio-output-dialog" aria-labelledby="audio-output-title">
+      <form method="dialog" class="wizard-shell">
+        <header class="wizard-header">
+          <div>
+            <p class="eyebrow">Computer-generated accompaniment</p>
+            <h2 id="audio-output-title">Choose an audio output</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="Close audio output setup">×</button>
+        </header>
+        <section class="wizard-step audio-output-step">
+          <p class="wizard-intro">
+            Connect this computer or USB audio interface to the mixer, then
+            choose a host desktop sink or direct ALSA output. Bluetooth devices
+            are supplied by the host's PipeWire session. The FR-4X
+            keeps using its own direct analog mixer path.
+          </p>
+          <label class="audio-output-picker">
+            <span>Accompaniment output</span>
+            <select id="audio-output-select">
+              <option value="">No output selected</option>
+            </select>
+          </label>
+          <p id="audio-output-message" class="inline-message" aria-live="polite">
+            Loading outputs…
+          </p>
+          <footer class="wizard-actions">
+            <button id="test-audio-output" class="secondary-button" type="button">Play test chord</button>
+            <button id="save-audio-output" class="primary-button" type="button">Save output</button>
           </footer>
         </section>
       </form>

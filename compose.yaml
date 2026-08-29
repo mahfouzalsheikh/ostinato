@@ -9,12 +9,17 @@ services:
     user: "0:0"
     environment:
       OSTINATO_STATE_DIRECTORY: /var/lib/ostinato
+      OSTINATO_SOUNDFONT: /usr/share/sounds/sf2/TimGM6mb.sf2
+      PIPEWIRE_RUNTIME_DIR: /run/ostinato-pipewire
     devices:
       - /dev/snd:/dev/snd
     volumes:
       - type: bind
         source: /dev/bus/usb
         target: /dev/bus/usb
+      - type: bind
+        source: ${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR must identify the desktop audio session}/pipewire-0
+        target: /run/ostinato-pipewire/pipewire-0
       - type: volume
         source: ostinato-state
         target: /var/lib/ostinato

@@ -2,26 +2,29 @@
 
 ## Safety boundary
 
-The FR-4X analog output goes directly to the mixer. Ostinato receives MIDI and
-generates accompaniment through a separate synthesizer/audio path. A computer,
-synthesizer, or control-display failure therefore cannot remove the performed
-accordion voice.
+The FR-4X analog output goes directly to the mixer. In the web arranger,
+Ostinato generates accompaniment PCM on an explicitly selected host ALSA
+output, which connects to a separate mixer input. The computer never captures
+or relays the accordion's analog signal, and accompaniment MIDI is not sent
+back to the FR-4X.
 
 ## Runtime model
 
 ```text
-FR-4X MIDI -> raw MIDI service -> WebSocket -> browser accordion surface
-                   |                            |
-                   |                            +-> explicit/user-trained mapping
-                   +<------- simulator MIDI ----+
-                   |
-                   +-> capture/verified mapping --+
-                                                    |
-computer keyboard -> explicit mapping --------------+-> chord state -> planner -> dispatcher -> synth
-                                                    |       |
-                                                    |       +-> built-in audible POC (computer only)
-                                                    |
-                                                    +------ diagnostics
+FR-4X USB MIDI -> raw MIDI service -> browser accordion/control surface
+                       |      ^
+                       |      +------- simulator MIDI
+                       |
+                       +-> reviewed input roles -> bass/chord pulse fusion
+                                                   -> harmony/tempo/sync state
+                                                   |
+                                                   +-> style event renderer
+                                                       -> native FluidSynth + SoundFont
+                                                          (procedural PCM fallback)
+                                                       -> selected host PCM output
+                                                       -> mixer analog input
+
+computer keyboard -> explicit chord mapping -> procedural PCM demo
 ```
 
 The real-time web service selects only exact names returned by the MIDI
@@ -40,15 +43,15 @@ optional bass pitch class, confidence, source event identifiers, and monotonic
 recognition time. The computer keyboard produces this explicitly for testing.
 The FR-4X path will produce it only through rules derived from labeled captures.
 
-Input recording/replay, mapping, transport, planning, dispatch, and synthesis
-are separate modules. The planner will combine chord state with a validated
-style and emit immutable normalized MIDI events for a bounded lookahead window.
-The dispatcher will own output, timing, and active-note accounting. FluidSynth
-turns dispatched MIDI into accompaniment audio.
+Input mapping, arranger state, procedural rendering, and PCM-output ownership
+are separate boundaries. The audio worker retains its own transport and
+renders bounded stereo buffers; it does not depend on browser timing. Stop,
+output failure, output change, and shutdown close the owned PCM stream.
 
-Start, stop, tempo, section, fill, ending, and panic controls eventually update
-the engine through a command boundary. Displays observe status but do not own
-the playback lifetime, so restarting a UI cannot interrupt accompaniment.
+Start, stop, intro, ending, style, sync, and panic controls update the web
+arranger through an HTTP command boundary. Displays observe status
+but do not own the playback lifetime, so restarting a UI does not interrupt
+accompaniment. Fill and a general style-file engine remain pending.
 
 ## Timing contract
 
@@ -59,21 +62,28 @@ new continuous epoch/position segment.
 
 ## Current implementation boundary
 
-P0 contains diagnostics and the explicit keyboard chord source. An experimental
-computer-only vertical slice can also render an original modern-tango pattern
-through the default host route using `aplay`. The 4/4 bar is grouped as
-1.5+1.5+1 beats and orchestrated across procedural bass, piano, reed, drums,
-auxiliary percussion, and backing strings. Its transport advances by an
-absolute integer audio-frame position, so buffers do not accumulate sleep-based
-drift. Its POC-only section state supports an immediate four-measure intro and
-a four-measure ending quantized to the next bar; the ending enters a stopped
-state after its final accent.
+The web service renders six proof-of-concept styles as stereo PCM. The Docker
+runtime uses the package-provided TimGM6mb SoundFont through libfluidsynth;
+hardware-free development retains the deterministic procedural fallback. It is
+disabled until the performer selects an exact currently discovered PipeWire
+sink or direct `plughw` route. A bounded C-major test verifies the same route
+before rehearsal; the selection is atomically persisted and restored only when
+that exact PCM identifier is still available. No ALSA card or device is a
+shared default.
 
-This audible harness writes mastered raw PCM directly to `aplay`. It creates no
-MIDI output messages and therefore has no instrument or percussion channels.
-Its noise-shaped procedural drum voices are separate from the later FluidSynth
-and SoundFont output design.
+All styles use four-bar intros, varying four-bar main phrases, and four-bar
+endings. Bass roles, comping, reeds, pads, accents, articulations, and
+timekeeper patterns are independently declared instead of being generically
+layered onto every genre. The web service fuses deduplicated attacks from the saved bass and
+chord channels, then normalizes their movement against the selected style's
+rhythmic spacing. Bass-note changes update the accompaniment inversion
+immediately; new chord-note clusters are isolated from notes still held from
+the preceding chord. Optional left-hand sync starts and stops from the same
+activity stream. It is still a small hard-coded arranger rather than the future
+validated style-v1 loader, and its musical sophistication is not claimed to
+match a commercial hardware arranger.
 
-The web surface and demo are not the future validated style loader, tick-based planner,
-dispatcher, FluidSynth path, or FR-4X mapping. It changes no host settings and
-does not claim any accordion or audio-latency evidence.
+The CLI `keyboard --play` harness still writes to the default `aplay` route;
+the web service differs by requiring an explicit route. Automated tests do not
+claim physical FR-4X behavior, acoustic latency, or musical acceptance; those
+remain hardware and rehearsal gates.

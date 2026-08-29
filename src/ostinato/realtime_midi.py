@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import threading
 import time
 from collections.abc import Callable, Sequence
 from typing import Any, Protocol, cast
@@ -184,6 +185,7 @@ class MidiService:
         self._error: str | None = None
         self._anonymous_owner = object()
         self._active_notes: dict[object, set[tuple[int, int]]] = {}
+        self._output_lock = threading.RLock()
 
     async def start(self) -> None:
         """Attach to the active event loop and begin reconnect monitoring."""
@@ -302,36 +304,40 @@ class MidiService:
         """Validate and send one message through the selected output."""
 
         data = validate_midi_bytes(values)
-        output = self._output
-        if output is None or self._output_name is None:
-            raise MidiOutputUnavailable("select a connected MIDI output first")
-        try:
-            output.send(data)
-        except Exception as error:
-            self._close_output()
-            self._error = f"MIDI output failed: {error}"
-            self._publish(self.snapshot())
-            raise MidiOutputUnavailable(self._error) from error
+        with self._output_lock:
+            output = self._output
+            if output is None or self._output_name is None:
+                raise MidiOutputUnavailable("select a connected MIDI output first")
+            try:
+                output.send(data)
+            except Exception as error:
+                self._close_output()
+                self._error = f"MIDI output failed: {error}"
+                self._publish_safely(self.snapshot())
+                raise MidiOutputUnavailable(self._error) from error
 
-        event = describe_midi_message(
-            data,
-            direction="out",
-            port=self._output_name,
-            timestamp_ns=time.monotonic_ns(),
-        )
-        note_owner = self._anonymous_owner if owner is None else owner
-        self._track_note(data, owner=note_owner)
-        self._publish(event)
+            event = describe_midi_message(
+                data,
+                direction="out",
+                port=self._output_name,
+                timestamp_ns=time.monotonic_ns(),
+            )
+            note_owner = self._anonymous_owner if owner is None else owner
+            self._track_note(data, owner=note_owner)
+        self._publish_safely(event)
         return event
 
     def release(self, owner: object) -> None:
         """Release every note started by one WebSocket client."""
 
-        notes = self._active_notes.pop(owner, set())
-        remaining = (
-            set().union(*self._active_notes.values()) if self._active_notes else set()
-        )
-        self._release_notes(notes - remaining)
+        with self._output_lock:
+            notes = self._active_notes.pop(owner, set())
+            remaining = (
+                set().union(*self._active_notes.values())
+                if self._active_notes
+                else set()
+            )
+            self._release_notes(notes - remaining)
 
     async def _monitor_ports(self) -> None:
         while True:
@@ -409,6 +415,19 @@ class MidiService:
                     queue.get_nowait()
             queue.put_nowait(event)
 
+    def _publish_safely(self, event: JsonObject) -> None:
+        loop = self._loop
+        if loop is None:
+            return
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+        if current_loop is loop:
+            self._publish(event)
+        else:
+            loop.call_soon_threadsafe(self._publish, event)
+
     def _close_input(self) -> None:
         if self._input is not None:
             with contextlib.suppress(Exception):
@@ -416,17 +435,18 @@ class MidiService:
         self._input = None
 
     def _close_output(self) -> None:
-        if self._output is not None:
-            notes = (
-                set().union(*self._active_notes.values())
-                if self._active_notes
-                else set()
-            )
-            self._active_notes.clear()
-            self._release_notes(notes)
-            with contextlib.suppress(Exception):
-                self._output.close()
-        self._output = None
+        with self._output_lock:
+            if self._output is not None:
+                notes = (
+                    set().union(*self._active_notes.values())
+                    if self._active_notes
+                    else set()
+                )
+                self._active_notes.clear()
+                self._release_notes(notes)
+                with contextlib.suppress(Exception):
+                    self._output.close()
+            self._output = None
 
     def _track_note(self, data: MidiBytes, *, owner: object) -> None:
         family = data[0] & 0xF0
@@ -450,7 +470,7 @@ class MidiService:
             data = (0x80 | (channel - 1), note, 0)
             with contextlib.suppress(Exception):
                 output.send(data)
-                self._publish(
+                self._publish_safely(
                     describe_midi_message(
                         data,
                         direction="out",

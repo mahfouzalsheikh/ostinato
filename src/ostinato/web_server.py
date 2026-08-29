@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -14,6 +14,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, StrictInt, model_validator
 
+from ostinato.arranger import ArrangerError, LiveArrangerService
+from ostinato.audio_output import AudioOutputError, AudioOutputService
 from ostinato.midi_detection import (
     MIDI_ROLES,
     MidiDetectionError,
@@ -118,14 +120,54 @@ class GuidedCaptures(BaseModel):
     chord: list[CapturedNote] = Field(min_length=1, max_length=4096)
 
 
+class ArrangerCommandPayload(BaseModel):
+    """One local arranger control from the web surface."""
+
+    action: Literal[
+        "style",
+        "start",
+        "stop",
+        "intro",
+        "ending",
+        "sync",
+        "tempo_mode",
+        "tempo",
+        "panic",
+    ]
+    value: str | bool | StrictInt | None = None
+
+
+class AudioOutputSelection(BaseModel):
+    """One exact ALSA identifier returned by current discovery."""
+
+    device: str = Field(min_length=1, max_length=512)
+
+
 def create_app(
     service: MidiService | None = None,
     profile_store: MidiProfileStore | None = None,
+    arranger_service: LiveArrangerService | None = None,
+    audio_output_service: AudioOutputService | None = None,
 ) -> FastAPI:
     """Create an application with an injectable, hardware-free MIDI service."""
 
     midi = service or MidiService()
     profiles = profile_store or MidiProfileStore()
+    audio_outputs = audio_output_service or AudioOutputService()
+    arranger = arranger_service or LiveArrangerService()
+    arranger_queue = midi.subscribe()
+
+    async def monitor_arranger_input() -> None:
+        while True:
+            try:
+                event = await asyncio.wait_for(
+                    arranger_queue.get(),
+                    timeout=arranger.next_check_delay_seconds(),
+                )
+                arranger.handle_midi_event(event)
+            except TimeoutError:
+                pass
+            arranger.advance()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -133,17 +175,38 @@ def create_app(
             profile = profiles.load()
         except MidiProfileStoreError:
             profile = None
+        input_name = None
+        output_name = None
         if profile is not None:
-            input_name = profile.get("input_port")
-            output_name = profile.get("output_port")
-            if isinstance(input_name, str) and (
-                output_name is None or isinstance(output_name, str)
+            saved_input = profile.get("input_port")
+            profile_output = profile.get("output_port")
+            input_name = saved_input if isinstance(saved_input, str) else None
+            if isinstance(profile_output, str):
+                output_name = profile_output
+        if input_name is not None or output_name is not None:
+            midi.restore_ports(input_name=input_name, output_name=output_name)
+        arranger.configure_profile(profile)
+        try:
+            output_status = audio_outputs.snapshot()
+            selected_audio = output_status.get("selected")
+            if output_status.get("available") is True and isinstance(
+                selected_audio, str
             ):
-                midi.restore_ports(input_name=input_name, output_name=output_name)
+                arranger.configure_audio_output(selected_audio)
+        except AudioOutputError:
+            arranger.configure_audio_output(None)
         await midi.start()
+        arranger_monitor = asyncio.create_task(
+            monitor_arranger_input(), name="ostinato-arranger-input"
+        )
         try:
             yield
         finally:
+            arranger_monitor.cancel()
+            with suppress(asyncio.CancelledError):
+                await arranger_monitor
+            midi.unsubscribe(arranger_queue)
+            arranger.close()
             await midi.stop()
 
     app = FastAPI(
@@ -153,6 +216,8 @@ def create_app(
     )
     app.state.midi = midi
     app.state.profile_store = profiles
+    app.state.arranger = arranger
+    app.state.audio_output_service = audio_outputs
     app.mount("/assets", StaticFiles(directory=STATIC_DIRECTORY), name="assets")
 
     @app.get("/", include_in_schema=False)
@@ -170,10 +235,11 @@ def create_app(
     @app.put("/api/midi/ports")
     async def select_ports(selection: PortSelection) -> dict[str, object]:
         try:
-            return midi.select_ports(
+            status = midi.select_ports(
                 input_name=selection.input,
                 output_name=selection.output,
             )
+            return status
         except MidiServiceError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
@@ -198,6 +264,55 @@ def create_app(
         except MidiDetectionError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
 
+    @app.get("/api/arranger/status")
+    async def arranger_status() -> dict[str, object]:
+        return arranger.advance()
+
+    @app.post("/api/arranger/command")
+    async def arranger_command(command: ArrangerCommandPayload) -> dict[str, object]:
+        try:
+            return arranger.command(command.action, command.value)
+        except ArrangerError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.get("/api/audio/outputs")
+    async def audio_output_status() -> dict[str, object]:
+        try:
+            return audio_outputs.snapshot()
+        except AudioOutputError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
+    @app.put("/api/audio/output")
+    async def save_audio_output(
+        selection: AudioOutputSelection,
+    ) -> dict[str, object]:
+        if arranger.advance().get("running") is True:
+            raise HTTPException(
+                status_code=409,
+                detail="stop the arranger before changing audio output",
+            )
+        try:
+            audio_outputs.select(selection.device)
+            arranger.configure_audio_output(selection.device)
+            return audio_outputs.snapshot()
+        except (ArrangerError, AudioOutputError) as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.post("/api/audio/test")
+    async def test_audio_output(
+        selection: AudioOutputSelection,
+    ) -> dict[str, str]:
+        if arranger.advance().get("running") is True:
+            raise HTTPException(
+                status_code=409,
+                detail="stop the arranger before testing audio output",
+            )
+        try:
+            audio_outputs.test(selection.device)
+            return {"status": "played", "device": selection.device}
+        except AudioOutputError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
     @app.get("/api/midi/profile")
     async def load_profile() -> dict[str, object] | None:
         try:
@@ -210,7 +325,9 @@ def create_app(
         value = profile.model_dump(mode="json")
         value["saved_at"] = datetime.now(UTC).isoformat()
         try:
-            return profiles.save(value)
+            saved = profiles.save(value)
+            arranger.configure_profile(saved)
+            return saved
         except MidiProfileStoreError as error:
             raise HTTPException(status_code=500, detail=str(error)) from error
 
@@ -218,6 +335,7 @@ def create_app(
     async def clear_profile() -> None:
         try:
             profiles.clear()
+            arranger.configure_profile(None)
         except MidiProfileStoreError as error:
             raise HTTPException(status_code=500, detail=str(error)) from error
 

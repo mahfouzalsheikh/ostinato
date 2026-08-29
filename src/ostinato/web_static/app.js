@@ -1,4 +1,4 @@
-import "./fr4x-accordion.js";
+import "./fr4x-accordion.js?v=11";
 
 const $ = (selector) => document.querySelector(selector);
 const accordion = $("#accordion");
@@ -11,6 +11,10 @@ const outputSelect = $("#midi-output");
 const eventList = $("#event-list");
 const readout = $("#transport-readout");
 const wizard = $("#midi-wizard");
+const arrangerStyle = $("#arranger-style");
+const arrangerMessage = $("#arranger-message");
+const fixedTempo = $("#arranger-fixed-tempo");
+const audioOutputDialog = $("#audio-output-dialog");
 
 const MAX_EVENTS = 60;
 const SIMULATOR_VELOCITY = 96;
@@ -49,6 +53,7 @@ let captureIndex = 0;
 let capturing = false;
 let captures = freshCaptures();
 let detection = null;
+let arrangerStatus = null;
 
 function setSocketState(state, label) {
   socketLed.className = `led ${state}`;
@@ -128,6 +133,156 @@ async function api(path, options = {}) {
     throw new Error(body.detail ?? `${response.status} ${response.statusText}`);
   }
   return response.status === 204 ? null : response.json();
+}
+
+async function loadArrangerStatus() {
+  try {
+    renderArrangerStatus(await api("/api/arranger/status"));
+  } catch (error) {
+    setArrangerMessage(`Could not load arranger status: ${error.message}`, true);
+  }
+}
+
+async function arrangerCommand(action, value = null) {
+  try {
+    const status = await api("/api/arranger/command", {
+      method: "POST",
+      body: JSON.stringify({ action, value }),
+    });
+    renderArrangerStatus(status);
+  } catch (error) {
+    setArrangerMessage(error.message, true);
+  }
+}
+
+function renderArrangerStatus(status) {
+  arrangerStatus = status;
+  const optionSignature = status.styles.map((style) => style.id).join(":");
+  if (arrangerStyle.dataset.options !== optionSignature) {
+    arrangerStyle.replaceChildren(...status.styles.map((style) => {
+      const option = new Option(`${style.name} · ${style.beats_per_bar}/4`, style.id);
+      option.title = style.description ?? "";
+      return option;
+    }));
+    arrangerStyle.dataset.options = optionSignature;
+  }
+  arrangerStyle.value = status.style;
+  arrangerStyle.disabled = status.running;
+  $("#arranger-tempo").textContent = status.tempo_bpm;
+  $("#arranger-tempo-source").textContent = status.tempo_source;
+  const fixed = status.tempo_mode === "fixed";
+  const tempoMode = $("#arranger-tempo-mode");
+  tempoMode.textContent = fixed ? "Fixed" : "Left-hand auto";
+  tempoMode.setAttribute("aria-pressed", String(fixed));
+  fixedTempo.disabled = !fixed;
+  if (document.activeElement !== fixedTempo) fixedTempo.value = status.tempo_bpm;
+  updateTempoKnob(Number(fixedTempo.value));
+  $("#arranger-chord").textContent = status.chord ?? "No chord";
+  $("#arranger-meter").textContent = `${status.beats_per_bar}/4 · ${styleName(status.style)} · ${status.synthesis_engine}`;
+  const section = status.section.replaceAll("_", " ");
+  $("#arranger-section").textContent = section;
+  const liveState = $(".arranger-live-state");
+  liveState.classList.toggle("running", status.running && status.section !== "ending");
+  liveState.classList.toggle("ending", status.section === "ending");
+  $("#arranger-start").disabled = status.running || !status.output_configured;
+  $("#arranger-intro").disabled = !status.output_configured;
+  $("#arranger-stop").disabled = !status.running;
+  $("#arranger-ending").disabled = !status.running;
+  $("#arranger-sync").setAttribute("aria-pressed", String(status.sync_enabled));
+
+  if (status.error) {
+    setArrangerMessage(status.error, true);
+  } else if (!status.output_configured) {
+    setArrangerMessage("Choose the analog accompaniment audio output before starting.", true);
+  } else if (status.bass_channel == null || status.chord_channel == null) {
+    setArrangerMessage("Run MIDI setup before using bass tempo or left-hand sync.");
+  } else if (fixed) {
+    setArrangerMessage(`Tempo is fixed at ${status.tempo_bpm} BPM. Drag the knob or use arrow keys to change it.`);
+  } else if (status.sync_enabled) {
+    setArrangerMessage(
+      `Left-hand sync is on: start on bass/chord activity and stop after ${status.sync_stop_bars} silent bars.`,
+    );
+  } else {
+    setArrangerMessage("Bass tempo is style-normalized. Switch to Fixed if you do not want strokes to change it.");
+  }
+}
+
+function updateTempoKnob(value) {
+  const minimum = Number(fixedTempo.min);
+  const maximum = Number(fixedTempo.max);
+  const bounded = Math.min(maximum, Math.max(minimum, value));
+  const angle = -135 + (270 * (bounded - minimum) / (maximum - minimum));
+  $("#tempo-knob").style.setProperty("--tempo-angle", `${angle}deg`);
+  $("#arranger-fixed-tempo-value").textContent = bounded;
+}
+
+async function openAudioOutput() {
+  try {
+    const status = await api("/api/audio/outputs");
+    const select = $("#audio-output-select");
+    select.replaceChildren(new Option("No output selected", ""));
+    for (const device of status.devices) {
+      select.append(new Option(`${device.name} — ${device.id}`, device.id));
+    }
+    if (status.selected
+        && [...select.options].some((option) => option.value === status.selected)) {
+      select.value = status.selected;
+    }
+    setAudioOutputMessage(
+      status.available
+        ? "Saved output is available. Play the test chord or choose another output."
+        : "Choose an output and play the test chord before saving.",
+    );
+    if (!audioOutputDialog.open) audioOutputDialog.showModal();
+  } catch (error) {
+    setArrangerMessage(`Could not load audio outputs: ${error.message}`, true);
+  }
+}
+
+function setAudioOutputMessage(message, error = false) {
+  const element = $("#audio-output-message");
+  element.textContent = message;
+  element.classList.toggle("error", error);
+}
+
+async function testAudioOutput() {
+  const device = $("#audio-output-select").value;
+  if (!device) return setAudioOutputMessage("Choose an output first.", true);
+  try {
+    setAudioOutputMessage("Playing a short C-major test chord…");
+    await api("/api/audio/test", {
+      method: "POST",
+      body: JSON.stringify({ device }),
+    });
+    setAudioOutputMessage("Test played. If you heard it from the mixer, save this output.");
+  } catch (error) {
+    setAudioOutputMessage(error.message, true);
+  }
+}
+
+async function saveAudioOutput() {
+  const device = $("#audio-output-select").value;
+  if (!device) return setAudioOutputMessage("Choose an output first.", true);
+  try {
+    await api("/api/audio/output", {
+      method: "PUT",
+      body: JSON.stringify({ device }),
+    });
+    audioOutputDialog.close();
+    await loadArrangerStatus();
+    setArrangerMessage("Analog accompaniment output saved. The arranger is ready.");
+  } catch (error) {
+    setAudioOutputMessage(error.message, true);
+  }
+}
+
+function styleName(styleId) {
+  return arrangerStatus?.styles.find((style) => style.id === styleId)?.name ?? styleId;
+}
+
+function setArrangerMessage(message, error = false) {
+  arrangerMessage.textContent = message;
+  arrangerMessage.classList.toggle("error", error);
 }
 
 async function loadProfile() {
@@ -492,6 +647,44 @@ accordion.addEventListener("unmapped-button", () => {
   showMessage("That visual button has no MIDI note observed by the setup wizard.", true);
 });
 
+arrangerStyle.addEventListener("change", () => arrangerCommand("style", arrangerStyle.value));
+$("#arranger-tempo-mode").addEventListener("click", () => {
+  const mode = arrangerStatus?.tempo_mode === "fixed" ? "bass_auto" : "fixed";
+  arrangerCommand("tempo_mode", mode);
+});
+fixedTempo.addEventListener("input", () => updateTempoKnob(Number(fixedTempo.value)));
+fixedTempo.addEventListener("change", () => arrangerCommand("tempo", Number(fixedTempo.value)));
+$("#open-audio-output").addEventListener("click", openAudioOutput);
+$("#test-audio-output").addEventListener("click", testAudioOutput);
+$("#save-audio-output").addEventListener("click", saveAudioOutput);
+$("#arranger-intro").addEventListener("click", () => arrangerCommand("intro"));
+$("#arranger-start").addEventListener("click", () => arrangerCommand("start"));
+$("#arranger-stop").addEventListener("click", () => arrangerCommand("stop"));
+$("#arranger-ending").addEventListener("click", () => arrangerCommand("ending"));
+$("#arranger-sync").addEventListener("click", () => {
+  arrangerCommand("sync", !arrangerStatus?.sync_enabled);
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.repeat || wizard.open || audioOutputDialog.open) return;
+  const target = event.target;
+  if (target instanceof HTMLElement
+      && (target.isContentEditable || ["INPUT", "SELECT", "TEXTAREA", "BUTTON"].includes(target.tagName))) {
+    return;
+  }
+  const commands = {
+    KeyI: ["intro", null],
+    Enter: ["start", null],
+    Space: ["stop", null],
+    KeyE: ["ending", null],
+    KeyS: ["sync", !arrangerStatus?.sync_enabled],
+  };
+  const command = commands[event.code];
+  if (!command) return;
+  event.preventDefault();
+  arrangerCommand(...command);
+});
+
 $("#clear-events").addEventListener("click", () => {
   eventList.innerHTML = '<li class="empty-event">No MIDI events received.</li>';
 });
@@ -501,5 +694,8 @@ setInterval(() => {
   eventsThisSecond = 0;
 }, 1000);
 
+setInterval(loadArrangerStatus, 350);
+
 loadProfile();
+loadArrangerStatus();
 connectSocket();
