@@ -165,14 +165,7 @@ class CustomStylePayload(BaseModel):
 
     schema_version: Literal[1, 2] = 2
     name: str = Field(min_length=1, max_length=80)
-    base_style_id: Literal[
-        "modern_tango",
-        "classic_tango",
-        "classic_waltz",
-        "bossa_nova",
-        "swing_foxtrot",
-        "alpine_polka",
-    ]
+    base_style_id: str = Field(min_length=1, max_length=64)
     beats_per_bar: int | None = Field(default=None, ge=2, le=4)
     phrase_bars: int = Field(default=4, ge=1, le=4)
     tempo_bpm: int = Field(ge=40, le=240)
@@ -349,6 +342,7 @@ def create_app(
                     "name": style.name,
                     "tempo_bpm": style.default_tempo_bpm,
                     "beats_per_bar": style.beats_per_bar,
+                    "provenance": style.provenance,
                 }
                 for style in DEMO_STYLES.values()
             ],

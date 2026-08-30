@@ -139,6 +139,9 @@ class GrooveBar:
     bass_roles: tuple[str, ...] = ()
     bass_accents: tuple[float, ...] = ()
     chord_accents: tuple[float, ...] = ()
+    kick_accents: tuple[float, ...] = ()
+    snare_accents: tuple[float, ...] = ()
+    auxiliary_accents: tuple[float, ...] = ()
     reed_onsets: tuple[float, ...] | None = None
     reed_accents: tuple[float, ...] = ()
     pad_onsets: tuple[float, ...] | None = None
@@ -158,6 +161,13 @@ class GrooveBar:
             raise ValueError("bass roles contain an unsupported harmonic function")
         if self.chord_accents and len(self.chord_accents) != len(self.chord_onsets):
             raise ValueError("chord accents must align with chord onsets")
+        for onsets, accents, label in (
+            (self.kick_onsets, self.kick_accents, "kick accents"),
+            (self.snare_onsets, self.snare_accents, "snare accents"),
+            (self.auxiliary_onsets, self.auxiliary_accents, "auxiliary accents"),
+        ):
+            if accents and len(accents) != len(onsets):
+                raise ValueError(f"{label} must align with its onsets")
         if self.reed_accents and (
             self.reed_onsets is None or len(self.reed_accents) != len(self.reed_onsets)
         ):
@@ -190,6 +200,7 @@ class DemoArrangementRenderer:
     )
     DEFAULT_TEMPO_BPM: ClassVar[int] = 120
     OUTPUT_MODE: ClassVar[str] = "procedural_pcm"
+    PROVENANCE: ClassVar[str] = "Project Ostinato original"
     MASTER_GAIN: ClassVar[float] = 2.6
     OUTPUT_LIMIT: ClassVar[int] = 30_000
     BEATS_PER_BAR: ClassVar[float] = 4.0
@@ -633,20 +644,31 @@ class DemoArrangementRenderer:
         seconds_per_beat: float,
         groove: GrooveBar,
     ) -> float:
-        _, kick_elapsed_beats = self._pulse_at(bar_phase, groove.kick_onsets)
+        kick_pulse, kick_elapsed_beats = self._pulse_at(bar_phase, groove.kick_onsets)
         kick_seconds = kick_elapsed_beats * seconds_per_beat
         kick_envelope = math.exp(-kick_seconds * 15)
         kick_cycles = (47 * kick_seconds) + (
             (70 / 30) * (1 - math.exp(-30 * kick_seconds))
         )
-        kick = 0.25 * kick_envelope * math.sin(math.tau * kick_cycles)
+        kick = (
+            0.25
+            * self._accent(groove.kick_accents, kick_pulse)
+            * kick_envelope
+            * math.sin(math.tau * kick_cycles)
+        )
 
-        _, snare_elapsed_beats = self._pulse_at(bar_phase, groove.snare_onsets)
+        snare_pulse, snare_elapsed_beats = self._pulse_at(
+            bar_phase, groove.snare_onsets
+        )
         snare_seconds = snare_elapsed_beats * seconds_per_beat
         snare_envelope = math.exp(-snare_seconds * 22)
         snare_noise = self._high_pass_noise(frame)
         snare_body = math.sin(math.tau * 175 * snare_seconds)
-        snare = snare_envelope * ((0.075 * snare_noise) + (0.018 * snare_body))
+        snare = (
+            self._accent(groove.snare_accents, snare_pulse)
+            * snare_envelope
+            * ((0.075 * snare_noise) + (0.018 * snare_body))
+        )
         return kick + snare
 
     def _render_auxiliary_percussion(
@@ -658,11 +680,14 @@ class DemoArrangementRenderer:
         seconds_per_beat: float,
         groove: GrooveBar,
     ) -> float:
-        _, click_elapsed_beats = self._pulse_at(bar_phase, groove.auxiliary_onsets)
+        click_pulse, click_elapsed_beats = self._pulse_at(
+            bar_phase, groove.auxiliary_onsets
+        )
         click_seconds = click_elapsed_beats * seconds_per_beat
         click_envelope = math.exp(-click_seconds * 46)
         click = (
             0.055
+            * self._accent(groove.auxiliary_accents, click_pulse)
             * click_envelope
             * sum(
                 math.sin(math.tau * frequency * click_seconds)
@@ -773,6 +798,10 @@ class DemoArrangementRenderer:
         value = (value * 0x846CA68B) & 0xFFFFFFFF
         value ^= value >> 16
         return (value / 2_147_483_647.5) - 1.0
+
+    @staticmethod
+    def _accent(accents: tuple[float, ...], index: int) -> float:
+        return accents[index] if index < len(accents) else 1.0
 
     @classmethod
     def _pulse_at(cls, position: float, onsets: tuple[float, ...]) -> tuple[int, float]:
@@ -1300,6 +1329,551 @@ class AlpinePolkaRenderer(DemoArrangementRenderer):
     )
 
 
+class HumanGrooveRenderer(DemoArrangementRenderer):
+    """Shared four-bar production arc for the attributed Groove MIDI pack."""
+
+    PROVENANCE = "Google Magenta Groove MIDI Dataset · CC BY 4.0 adaptation"
+    _PAD_DURATION_BEATS = 0.42
+    _PHRASE_DYNAMICS = (0.92, 0.98, 1.0, 1.07)
+    _INTRO_LEVELS = (
+        EnsembleLevels(0.0, 0.30, 0.0, 0.0, 0.22, 0.20),
+        EnsembleLevels(0.42, 0.52, 0.18, 0.24, 0.42, 0.28),
+        EnsembleLevels(0.70, 0.70, 0.34, 0.50, 0.58, 0.36),
+        EnsembleLevels(0.90, 0.84, 0.48, 0.76, 0.72, 0.44),
+    )
+    _ENDING_LEVELS = (
+        EnsembleLevels(0.92, 0.84, 0.50, 0.76, 0.72, 0.44),
+        EnsembleLevels(0.92, 0.90, 0.58, 0.62, 0.58, 0.50),
+        EnsembleLevels(0.78, 0.98, 0.72, 0.38, 0.36, 0.62),
+        EnsembleLevels(0.72, 0.94, 0.86, 0.16, 0.14, 0.74),
+    )
+
+
+class MotownSoulRenderer(HumanGrooveRenderer):
+    """Four-bar soul pocket derived from GMD drummer7/session2/106."""
+
+    STYLE_NAME = "motown_soul"
+    DISPLAY_NAME = "Motown Soul"
+    DESCRIPTION = "Warm soul pocket with melodic bass, backbeat, and tambourine lift"
+    DEFAULT_TEMPO_BPM = 104
+    SYNCOPATION_GROUPS = (0.5, 1.0, 1.5)
+    _BASS_DURATION_BEATS = 0.62
+    _CHORD_DURATION_BEATS = 0.30
+    _REED_DURATION_BEATS = 0.36
+    _GROOVE = (
+        GrooveBar(
+            bass_onsets=(0.0, 1.5, 2.0, 3.5),
+            bass_intervals=(0, 7, 12, 4),
+            chord_onsets=(0.5, 1.5, 2.5, 3.5),
+            kick_onsets=(0.0, 1.5, 2.0, 3.5),
+            snare_onsets=(1.0, 3.0),
+            auxiliary_onsets=(1.0, 3.0),
+            shaker_accents=(0, 4, 8, 12),
+            bass_roles=("root", "fifth", "octave", "third"),
+            bass_accents=(1.08, 0.82, 1.0, 0.76),
+            chord_accents=(0.74, 0.66, 0.82, 0.72),
+            kick_accents=(1.08, 0.66, 0.94, 0.72),
+            snare_accents=(1.04, 1.10),
+            auxiliary_accents=(0.72, 1.0),
+            reed_onsets=(),
+            pad_onsets=(0.5, 2.5),
+            hat_onsets=(0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5),
+            hat_accents=(0.82, 0.48, 0.68, 0.48, 0.78, 0.48, 0.72, 0.54),
+        ),
+        GrooveBar(
+            bass_onsets=(0.0, 1.0, 2.0, 2.75, 3.5),
+            bass_intervals=(0, 4, 7, 12, 4),
+            chord_onsets=(0.5, 1.5, 2.5, 3.5),
+            kick_onsets=(0.0, 1.5, 2.0, 3.5),
+            snare_onsets=(1.0, 3.0),
+            auxiliary_onsets=(1.0, 3.0),
+            shaker_accents=(0, 4, 8, 12),
+            voicing_rotation=1,
+            bass_roles=("root", "third", "fifth", "octave", "third"),
+            bass_accents=(1.04, 0.68, 0.92, 0.72, 0.74),
+            chord_accents=(0.70, 0.64, 0.80, 0.70),
+            kick_accents=(1.06, 0.64, 0.92, 0.70),
+            snare_accents=(1.08, 1.12),
+            auxiliary_accents=(0.76, 1.04),
+            reed_onsets=(3.5,),
+            reed_accents=(0.42,),
+            pad_onsets=(0.5, 2.5),
+            hat_onsets=(0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5),
+            hat_accents=(0.80, 0.46, 0.70, 0.46, 0.76, 0.46, 0.74, 0.52),
+        ),
+        GrooveBar(
+            bass_onsets=(0.0, 1.5, 2.0, 3.0, 3.5),
+            bass_intervals=(12, 7, 4, 7, 0),
+            chord_onsets=(0.5, 1.5, 2.5, 3.5),
+            kick_onsets=(0.0, 1.5, 2.0, 3.5),
+            snare_onsets=(1.0, 3.0),
+            auxiliary_onsets=(1.0, 3.0),
+            shaker_accents=(0, 4, 8, 12),
+            voicing_rotation=2,
+            bass_roles=("octave", "fifth", "third", "fifth", "root"),
+            bass_accents=(1.0, 0.76, 0.86, 0.72, 0.80),
+            chord_accents=(0.72, 0.64, 0.78, 0.72),
+            kick_accents=(1.04, 0.62, 0.90, 0.72),
+            snare_accents=(1.02, 1.14),
+            auxiliary_accents=(0.72, 1.06),
+            reed_onsets=(1.5,),
+            reed_accents=(0.38,),
+            pad_onsets=(0.5, 2.5),
+            hat_onsets=(0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5),
+            hat_accents=(0.82, 0.46, 0.68, 0.46, 0.78, 0.46, 0.76, 0.54),
+        ),
+        GrooveBar(
+            bass_onsets=(0.0, 1.0, 1.5, 2.0, 3.0, 3.75),
+            bass_intervals=(0, 4, 7, 12, 7, 0),
+            chord_onsets=(0.5, 1.5, 2.5, 3.25, 3.75),
+            kick_onsets=(0.0, 1.5, 2.0, 3.5, 3.75),
+            snare_onsets=(1.0, 3.0, 3.75),
+            auxiliary_onsets=(1.0, 3.0, 3.75),
+            shaker_accents=(0, 4, 8, 12, 15),
+            voicing_rotation=1,
+            bass_roles=("root", "third", "fifth", "octave", "fifth", "root"),
+            bass_accents=(1.08, 0.66, 0.72, 0.94, 0.72, 0.62),
+            chord_accents=(0.72, 0.64, 0.76, 0.58, 0.84),
+            kick_accents=(1.08, 0.64, 0.92, 0.66, 0.74),
+            snare_accents=(1.04, 1.08, 0.62),
+            auxiliary_accents=(0.72, 1.0, 0.68),
+            reed_onsets=(3.0, 3.5, 3.75),
+            reed_accents=(0.36, 0.48, 0.62),
+            pad_onsets=(0.5, 2.5),
+            hat_onsets=(0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 3.75),
+            hat_accents=(0.84, 0.46, 0.70, 0.46, 0.80, 0.46, 0.78, 0.54, 0.64),
+        ),
+    )
+    _MAIN_LEVELS = EnsembleLevels(0.96, 0.82, 0.46, 0.72, 0.82, 0.50)
+
+
+class FunkPocketRenderer(HumanGrooveRenderer):
+    """Syncopated pocket derived from the four GMD funk/groove1 performances."""
+
+    STYLE_NAME = "funk_pocket"
+    DISPLAY_NAME = "Funk Pocket"
+    DESCRIPTION = "Tight syncopated funk with active bass and dynamic ghost notes"
+    DEFAULT_TEMPO_BPM = 112
+    SYNCOPATION_GROUPS = (0.25, 0.5, 0.75, 1.0)
+    _BASS_DURATION_BEATS = 0.32
+    _CHORD_DURATION_BEATS = 0.18
+    _REED_DURATION_BEATS = 0.24
+    _GROOVE = (
+        GrooveBar(
+            (0.0, 0.75, 1.5, 2.5, 3.25),
+            (0, 7, 4, 12, 7),
+            (0.5, 1.25, 2.25, 3.5),
+            (0.0, 0.5, 2.5, 2.75),
+            (1.0, 1.75, 3.0, 3.75),
+            (0.0, 2.0),
+            (0, 4, 8, 12),
+            bass_roles=("root", "fifth", "third", "octave", "fifth"),
+            bass_accents=(1.12, 0.70, 0.78, 0.98, 0.72),
+            chord_accents=(0.86, 0.62, 0.78, 0.72),
+            kick_accents=(1.12, 0.72, 0.92, 0.66),
+            snare_accents=(1.10, 0.45, 1.04, 0.42),
+            auxiliary_accents=(0.82, 0.74),
+            reed_onsets=(),
+            pad_onsets=(),
+            hat_onsets=(0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5),
+            hat_accents=(1.0, 0.48, 0.86, 0.46, 0.94, 0.50, 0.90, 0.54),
+        ),
+        GrooveBar(
+            (0.0, 0.5, 1.5, 2.5, 3.5),
+            (12, 7, 4, 0, 7),
+            (0.25, 1.25, 2.25, 3.25),
+            (0.0, 0.5, 2.0, 2.5),
+            (1.0, 1.75, 3.0),
+            (0.0, 2.0),
+            (0, 4, 8, 12),
+            1,
+            bass_roles=("octave", "fifth", "third", "root", "fifth"),
+            bass_accents=(1.04, 0.72, 0.76, 0.94, 0.68),
+            chord_accents=(0.76, 0.68, 0.82, 0.70),
+            kick_accents=(1.08, 0.74, 0.88, 0.78),
+            snare_accents=(1.08, 0.42, 1.02),
+            auxiliary_accents=(0.78, 0.72),
+            reed_onsets=(3.25,),
+            reed_accents=(0.44,),
+            pad_onsets=(),
+            hat_onsets=(0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5),
+            hat_accents=(0.98, 0.48, 0.84, 0.46, 0.96, 0.50, 0.88, 0.52),
+        ),
+        GrooveBar(
+            (0.0, 0.75, 1.5, 2.25, 2.75, 3.5),
+            (0, 7, 4, 7, 12, 4),
+            (0.5, 1.25, 2.5, 3.25),
+            (0.0, 0.75, 2.0, 2.75),
+            (1.0, 1.75, 3.0, 3.5),
+            (0.0, 2.0),
+            (0, 4, 8, 12),
+            2,
+            bass_roles=("root", "fifth", "third", "fifth", "octave", "third"),
+            bass_accents=(1.10, 0.68, 0.74, 0.66, 0.90, 0.70),
+            chord_accents=(0.82, 0.64, 0.80, 0.72),
+            kick_accents=(1.10, 0.66, 0.90, 0.72),
+            snare_accents=(1.06, 0.40, 1.0, 0.48),
+            auxiliary_accents=(0.80, 0.74),
+            reed_onsets=(2.75,),
+            reed_accents=(0.42,),
+            pad_onsets=(),
+            hat_onsets=(0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5),
+            hat_accents=(1.0, 0.46, 0.86, 0.48, 0.92, 0.50, 0.90, 0.56),
+        ),
+        GrooveBar(
+            (0.0, 0.5, 0.75, 1.5, 2.5, 2.75, 3.5, 3.75),
+            (0, 7, 4, 7, 12, 7, 4, 0),
+            (0.5, 1.25, 2.25, 3.0, 3.5, 3.75),
+            (0.0, 0.5, 2.5, 2.75, 3.75),
+            (1.0, 1.75, 3.0, 3.5, 3.75),
+            (0.0, 2.0, 3.75),
+            (0, 4, 8, 12, 15),
+            1,
+            bass_roles=(
+                "root",
+                "fifth",
+                "third",
+                "fifth",
+                "octave",
+                "fifth",
+                "third",
+                "root",
+            ),
+            bass_accents=(1.12, 0.70, 0.62, 0.72, 0.94, 0.62, 0.68, 0.58),
+            chord_accents=(0.82, 0.62, 0.76, 0.66, 0.72, 0.82),
+            kick_accents=(1.12, 0.72, 0.90, 0.64, 0.72),
+            snare_accents=(1.08, 0.42, 1.02, 0.52, 0.46),
+            auxiliary_accents=(0.82, 0.74, 0.66),
+            reed_onsets=(3.0, 3.5, 3.75),
+            reed_accents=(0.36, 0.48, 0.62),
+            pad_onsets=(),
+            hat_onsets=(0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 3.75),
+            hat_accents=(1.0, 0.48, 0.84, 0.46, 0.94, 0.50, 0.90, 0.54, 0.64),
+        ),
+    )
+    _MAIN_LEVELS = EnsembleLevels(1.0, 0.84, 0.42, 0.80, 0.72, 0.34)
+
+
+class SoftPopRenderer(HumanGrooveRenderer):
+    """Breathing ballad groove derived from GMD drummer7/session3/11."""
+
+    STYLE_NAME = "soft_pop"
+    DISPLAY_NAME = "Soft Pop Ballad"
+    DESCRIPTION = "Spacious acoustic ballad with restrained drums and lyrical fills"
+    DEFAULT_TEMPO_BPM = 83
+    SYNCOPATION_GROUPS = (0.5, 1.0, 1.5, 2.0)
+    _BASS_DURATION_BEATS = 1.2
+    _CHORD_DURATION_BEATS = 0.82
+    _REED_DURATION_BEATS = 0.72
+    _PAD_DURATION_BEATS = 1.85
+    _GROOVE = (
+        GrooveBar(
+            (0.0, 2.0),
+            (0, 7),
+            (0.0, 2.0),
+            (0.0, 1.5),
+            (1.0, 3.0),
+            (0.0,),
+            (0, 8),
+            bass_roles=("root", "fifth"),
+            bass_accents=(0.94, 0.82),
+            chord_accents=(0.72, 0.64),
+            kick_accents=(0.92, 0.62),
+            snare_accents=(0.82, 0.88),
+            auxiliary_accents=(0.50,),
+            reed_onsets=(),
+            pad_onsets=(0.0, 2.0),
+            hat_onsets=(0.0, 1.0, 2.0, 3.0),
+            hat_accents=(0.66, 0.50, 0.62, 0.52),
+        ),
+        GrooveBar(
+            (0.0, 1.5, 2.0),
+            (0, 7, 12),
+            (0.0, 2.0),
+            (0.0, 1.5),
+            (1.0, 3.0),
+            (0.0,),
+            (0, 8),
+            1,
+            bass_roles=("root", "fifth", "octave"),
+            bass_accents=(0.92, 0.68, 0.78),
+            chord_accents=(0.70, 0.62),
+            kick_accents=(0.90, 0.60),
+            snare_accents=(0.84, 0.90),
+            auxiliary_accents=(0.48,),
+            reed_onsets=(3.0,),
+            reed_accents=(0.34,),
+            pad_onsets=(0.0, 2.0),
+            hat_onsets=(0.0, 1.0, 2.0, 3.0),
+            hat_accents=(0.64, 0.48, 0.62, 0.52),
+        ),
+        GrooveBar(
+            (0.0, 1.5, 2.0, 3.5),
+            (12, 7, 0, 7),
+            (0.0, 2.0),
+            (0.0, 1.5, 2.0),
+            (1.0, 3.0),
+            (0.0,),
+            (0, 8),
+            2,
+            bass_roles=("octave", "fifth", "root", "fifth"),
+            bass_accents=(0.94, 0.66, 0.82, 0.62),
+            chord_accents=(0.72, 0.64),
+            kick_accents=(0.92, 0.58, 0.70),
+            snare_accents=(0.84, 0.90),
+            auxiliary_accents=(0.50,),
+            reed_onsets=(2.5,),
+            reed_accents=(0.32,),
+            pad_onsets=(0.0, 2.0),
+            hat_onsets=(0.0, 1.0, 2.0, 2.5, 3.0),
+            hat_accents=(0.66, 0.48, 0.62, 0.34, 0.54),
+        ),
+        GrooveBar(
+            (0.0, 1.5, 2.0, 3.0, 3.5),
+            (0, 7, 12, 7, 0),
+            (0.0, 2.0, 3.5),
+            (0.0, 1.5, 2.5, 3.75),
+            (1.0, 3.0, 3.75),
+            (0.0, 3.75),
+            (0, 8, 15),
+            1,
+            bass_roles=("root", "fifth", "octave", "fifth", "root"),
+            bass_accents=(0.96, 0.66, 0.82, 0.64, 0.58),
+            chord_accents=(0.72, 0.64, 0.76),
+            kick_accents=(0.94, 0.60, 0.62, 0.68),
+            snare_accents=(0.86, 0.92, 0.48),
+            auxiliary_accents=(0.52, 0.62),
+            reed_onsets=(3.0, 3.5, 3.75),
+            reed_accents=(0.32, 0.42, 0.56),
+            pad_onsets=(0.0, 2.0),
+            hat_onsets=(0.0, 1.0, 2.0, 2.5, 3.0, 3.5),
+            hat_accents=(0.66, 0.48, 0.62, 0.32, 0.56, 0.38),
+        ),
+    )
+    _MAIN_LEVELS = EnsembleLevels(0.74, 0.92, 0.42, 0.46, 0.42, 0.58)
+
+
+class CountryTwoStepRenderer(HumanGrooveRenderer):
+    """Train-beat country groove derived from GMD drummer1/session2/10."""
+
+    STYLE_NAME = "country_two_step"
+    DISPLAY_NAME = "Country Two-Step"
+    DESCRIPTION = "Driving train beat with alternating bass and acoustic rhythm"
+    DEFAULT_TEMPO_BPM = 114
+    SYNCOPATION_GROUPS = (0.5, 1.0)
+    _BASS_DURATION_BEATS = 0.45
+    _CHORD_DURATION_BEATS = 0.34
+    _REED_DURATION_BEATS = 0.28
+    _GROOVE = tuple(
+        GrooveBar(
+            bass_onsets=(0.0, 1.0, 2.0, 3.0, *(() if bar < 3 else (3.5,))),
+            bass_intervals=(0, 7, 12, 7, *((0,) if bar == 3 else ())),
+            chord_onsets=(0.5, 1.5, 2.5, 3.5),
+            kick_onsets=(0.0, 1.0, 2.0, 3.0),
+            snare_onsets=(0.5, 1.5, 2.5, 3.5),
+            auxiliary_onsets=(1.0, 3.0),
+            shaker_accents=(0, 4, 8, 12),
+            voicing_rotation=bar % 3,
+            bass_roles=(
+                "root",
+                "fifth",
+                "octave",
+                "fifth",
+                *(("root",) if bar == 3 else ()),
+            ),
+            bass_accents=(1.04, 0.86, 0.96, 0.84, *((0.58,) if bar == 3 else ())),
+            chord_accents=(0.82, 0.72, 0.80, 0.74),
+            kick_accents=(0.94, 0.76, 0.92, 0.78),
+            snare_accents=(0.48, 0.92, 0.48, 0.96),
+            auxiliary_accents=(0.58, 0.64),
+            reed_onsets=(() if bar < 2 else ((3.5,) if bar == 2 else (3.0, 3.5))),
+            reed_accents=(() if bar < 2 else ((0.42,) if bar == 2 else (0.42, 0.58))),
+            pad_onsets=(),
+            hat_onsets=(0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5),
+            hat_accents=(0.72, 0.50, 0.66, 0.50, 0.70, 0.50, 0.68, 0.54),
+        )
+        for bar in range(4)
+    )
+    _MAIN_LEVELS = EnsembleLevels(0.94, 0.90, 0.42, 0.72, 0.54, 0.44)
+
+
+class ReggaeOneDropRenderer(HumanGrooveRenderer):
+    """Laid-back one-drop groove derived from GMD drummer5/session2/5."""
+
+    STYLE_NAME = "reggae_one_drop"
+    DISPLAY_NAME = "Reggae One Drop"
+    DESCRIPTION = "Deep one-drop bass with clipped offbeat guitar and sparse fills"
+    DEFAULT_TEMPO_BPM = 84
+    SYNCOPATION_GROUPS = (0.5, 1.0, 1.5)
+    _BASS_DURATION_BEATS = 0.92
+    _CHORD_DURATION_BEATS = 0.18
+    _REED_DURATION_BEATS = 0.34
+    _GROOVE = tuple(
+        GrooveBar(
+            bass_onsets=(0.0, 1.5, 2.75, *((3.5,) if bar in (1, 3) else ())),
+            bass_intervals=(0, 7, 12, *((7,) if bar in (1, 3) else ())),
+            chord_onsets=(0.5, 1.5, 2.5, 3.5),
+            kick_onsets=(2.0,),
+            snare_onsets=(2.0, *((3.5,) if bar == 3 else ())),
+            auxiliary_onsets=(0.5, 1.5, 2.5, 3.5),
+            shaker_accents=(2, 6, 10, 14),
+            voicing_rotation=bar % 2,
+            bass_roles=(
+                "root",
+                "fifth",
+                "octave",
+                *(("fifth",) if bar in (1, 3) else ()),
+            ),
+            bass_accents=(1.08, 0.78, 0.88, *((0.66,) if bar in (1, 3) else ())),
+            chord_accents=(0.78, 0.72, 0.82, 0.74),
+            kick_accents=(0.92,),
+            snare_accents=(1.06, *((0.46,) if bar == 3 else ())),
+            auxiliary_accents=(0.82, 0.68, 0.78, 0.72),
+            reed_onsets=(() if bar < 2 else ((3.5,) if bar == 2 else (3.0, 3.5))),
+            reed_accents=(() if bar < 2 else ((0.36,) if bar == 2 else (0.38, 0.52))),
+            pad_onsets=(),
+            hat_onsets=(0.0, 1.0, 2.0, 3.0),
+            hat_accents=(0.50, 0.44, 0.58, 0.46),
+        )
+        for bar in range(4)
+    )
+    _MAIN_LEVELS = EnsembleLevels(1.0, 0.92, 0.34, 0.54, 0.72, 0.28)
+
+
+class BrazilianSambaRenderer(HumanGrooveRenderer):
+    """Layered samba pulse derived from GMD drummer5/session2/17."""
+
+    STYLE_NAME = "brazilian_samba"
+    DISPLAY_NAME = "Brazilian Samba"
+    DESCRIPTION = "Layered Brazilian pulse with syncopated bass and bright percussion"
+    DEFAULT_TEMPO_BPM = 110
+    SYNCOPATION_GROUPS = (0.25, 0.5, 0.75, 1.0)
+    _BASS_DURATION_BEATS = 0.38
+    _CHORD_DURATION_BEATS = 0.24
+    _REED_DURATION_BEATS = 0.30
+    _GROOVE = tuple(
+        GrooveBar(
+            bass_onsets=(0.0, 0.75, 1.0, 1.75, 2.0, 2.75, 3.0, 3.75),
+            bass_intervals=(0, 7, 12, 7, 0, 7, 12, 7),
+            chord_onsets=(0.5, 1.5, 2.5, 3.5),
+            kick_onsets=(0.0, 0.75, 2.0, 2.75),
+            snare_onsets=(0.75, 1.5, 2.75, 3.5, *((3.75,) if bar == 3 else ())),
+            auxiliary_onsets=(0.0, 0.75, 1.5, 2.0, 2.75, 3.5),
+            shaker_accents=(0, 3, 6, 8, 11, 14),
+            voicing_rotation=bar % 3,
+            bass_roles=(
+                "root",
+                "fifth",
+                "octave",
+                "fifth",
+                "root",
+                "fifth",
+                "octave",
+                "fifth",
+            ),
+            bass_accents=(1.02, 0.64, 0.78, 0.66, 0.96, 0.64, 0.80, 0.68),
+            chord_accents=(0.72, 0.80, 0.70, 0.84),
+            kick_accents=(0.96, 0.70, 0.92, 0.72),
+            snare_accents=(0.88, 0.62, 0.90, 0.66, *((0.48,) if bar == 3 else ())),
+            auxiliary_accents=(0.82, 0.64, 0.78, 0.84, 0.66, 0.80),
+            reed_onsets=(() if bar < 2 else ((3.5,) if bar == 2 else (3.0, 3.5, 3.75))),
+            reed_accents=(
+                () if bar < 2 else ((0.34,) if bar == 2 else (0.36, 0.46, 0.58))
+            ),
+            pad_onsets=(),
+            hat_onsets=(0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5),
+            hat_accents=(0.76, 0.48, 0.68, 0.50, 0.78, 0.48, 0.70, 0.54),
+        )
+        for bar in range(4)
+    )
+    _MAIN_LEVELS = EnsembleLevels(0.90, 0.86, 0.38, 0.72, 0.98, 0.30)
+
+
+class NewOrleansChaChaRenderer(HumanGrooveRenderer):
+    """Percussive cha-cha derived from GMD drummer5/session2/8."""
+
+    STYLE_NAME = "new_orleans_chacha"
+    DISPLAY_NAME = "New Orleans Cha-Cha"
+    DESCRIPTION = "Percussive cha-cha with tumbao bass, crisp guitar, and flute answers"
+    DEFAULT_TEMPO_BPM = 124
+    SYNCOPATION_GROUPS = (0.5, 1.0, 1.5)
+    _BASS_DURATION_BEATS = 0.46
+    _CHORD_DURATION_BEATS = 0.24
+    _REED_DURATION_BEATS = 0.32
+    _GROOVE = tuple(
+        GrooveBar(
+            bass_onsets=(0.0, 1.5, 2.5, 3.0, 3.5),
+            bass_intervals=(0, 7, 12, 7, 0),
+            chord_onsets=(0.5, 1.5, 2.5, 3.5),
+            kick_onsets=(0.0, 2.5, 3.5),
+            snare_onsets=(1.0, 2.0, 3.0),
+            auxiliary_onsets=(0.0, 1.5, 2.5, 3.0),
+            shaker_accents=(0, 6, 10, 12),
+            voicing_rotation=bar % 3,
+            bass_roles=("root", "fifth", "octave", "fifth", "root"),
+            bass_accents=(1.02, 0.72, 0.86, 0.78, 0.66),
+            chord_accents=(0.74, 0.68, 0.80, 0.72),
+            kick_accents=(0.94, 0.72, 0.78),
+            snare_accents=(0.58, 0.52, 0.62),
+            auxiliary_accents=(0.90, 0.74, 0.86, 0.78),
+            reed_onsets=(() if bar < 2 else ((3.5,) if bar == 2 else (3.0, 3.5))),
+            reed_accents=(() if bar < 2 else ((0.38,) if bar == 2 else (0.40, 0.54))),
+            pad_onsets=(),
+            hat_onsets=(0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5),
+            hat_accents=(0.68, 0.46, 0.62, 0.48, 0.70, 0.48, 0.66, 0.52),
+        )
+        for bar in range(4)
+    )
+    _MAIN_LEVELS = EnsembleLevels(0.92, 0.88, 0.48, 0.62, 0.92, 0.26)
+
+
+class BluesShuffleRenderer(HumanGrooveRenderer):
+    """Triplet shuffle derived from GMD drummer4/session1/6."""
+
+    STYLE_NAME = "blues_shuffle"
+    DISPLAY_NAME = "Blues Shuffle"
+    DESCRIPTION = "Rolling triplet shuffle with walking bass and responsive fills"
+    DEFAULT_TEMPO_BPM = 112
+    SYNCOPATION_GROUPS = (0.67, 1.0, 1.33)
+    _BASS_DURATION_BEATS = 0.62
+    _CHORD_DURATION_BEATS = 0.28
+    _REED_DURATION_BEATS = 0.36
+    _GROOVE = tuple(
+        GrooveBar(
+            bass_onsets=(0.0, 0.67, 1.0, 1.67, 2.0, 2.67, 3.0, 3.67),
+            bass_intervals=(0, 4, 7, 10, 12, 10, 7, 4),
+            chord_onsets=(0.67, 1.67, 2.67, 3.67),
+            kick_onsets=(0.0, 0.67, 2.0, 2.67, *((3.67,) if bar == 3 else ())),
+            snare_onsets=(1.0, 3.0, *((3.67,) if bar == 3 else ())),
+            auxiliary_onsets=(0.0, 2.0),
+            shaker_accents=(0, 4, 8, 12),
+            voicing_rotation=bar % 3,
+            bass_roles=(
+                "root",
+                "third",
+                "fifth",
+                "color",
+                "octave",
+                "color",
+                "fifth",
+                "third",
+            ),
+            bass_accents=(1.02, 0.74, 0.84, 0.72, 0.94, 0.70, 0.82, 0.72),
+            chord_accents=(0.74, 0.70, 0.76, 0.72),
+            kick_accents=(1.0, 0.70, 0.90, 0.72, *((0.66,) if bar == 3 else ())),
+            snare_accents=(1.0, 1.06, *((0.48,) if bar == 3 else ())),
+            auxiliary_accents=(0.62, 0.58),
+            reed_onsets=(() if bar < 2 else ((3.67,) if bar == 2 else (3.0, 3.67))),
+            reed_accents=(() if bar < 2 else ((0.42,) if bar == 2 else (0.42, 0.58))),
+            pad_onsets=(0.0,),
+            hat_onsets=(0.0, 0.67, 1.0, 1.67, 2.0, 2.67, 3.0, 3.67),
+            hat_accents=(0.86, 0.52, 0.68, 0.50, 0.82, 0.52, 0.70, 0.54),
+        )
+        for bar in range(4)
+    )
+    _MAIN_LEVELS = EnsembleLevels(0.96, 0.84, 0.54, 0.72, 0.70, 0.38)
+
+
 @dataclass(frozen=True, slots=True)
 class DemoStyleDefinition:
     """Public metadata and renderer type for one original procedural style."""
@@ -1309,6 +1883,7 @@ class DemoStyleDefinition:
     description: str
     default_tempo_bpm: int
     beats_per_bar: int
+    provenance: str
     renderer: type[DemoArrangementRenderer]
 
 
@@ -1319,6 +1894,7 @@ DEMO_STYLES: dict[str, DemoStyleDefinition] = {
         description=renderer.DESCRIPTION,
         default_tempo_bpm=renderer.DEFAULT_TEMPO_BPM,
         beats_per_bar=round(renderer.BEATS_PER_BAR),
+        provenance=renderer.PROVENANCE,
         renderer=renderer,
     )
     for renderer in (
@@ -1328,6 +1904,14 @@ DEMO_STYLES: dict[str, DemoStyleDefinition] = {
         BossaNovaRenderer,
         SwingFoxtrotRenderer,
         AlpinePolkaRenderer,
+        MotownSoulRenderer,
+        FunkPocketRenderer,
+        SoftPopRenderer,
+        CountryTwoStepRenderer,
+        ReggaeOneDropRenderer,
+        BrazilianSambaRenderer,
+        NewOrleansChaChaRenderer,
+        BluesShuffleRenderer,
     )
 }
 

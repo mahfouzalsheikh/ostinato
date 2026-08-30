@@ -91,7 +91,7 @@ dependency. Compose passes the package-owned
 different file. TimGM6mb is distributed under GPL-2 according to the package
 copyright metadata.
 
-When this configured file is present, the six arrangements use native
+When this configured file is present, the fourteen arrangements use native
 FluidSynth voices from the curated acoustic-piano, acoustic-guitar, flute, and
 General MIDI drum palette. The web style designer saves editable template,
 meter, phrase length, instrument, register, articulation, tempo, drum, and mix

@@ -5,7 +5,7 @@ Roland FR-4X V-Accordion. The accordion's analog audio remains connected
 directly to the mixer; the computer produces accompaniment only.
 
 The repository currently implements milestone **P0**, a hardware-free
-computer-keyboard chord source, an experimental six-style audible arranger,
+computer-keyboard chord source, an experimental fourteen-style audible arranger,
 and a real-time web/MIDI surface. The guided setup saves reviewed input roles;
 FR-4X recording and production chord recognition still wait for representative
 hardware captures.
@@ -76,9 +76,10 @@ For host development without Docker:
 pipenv run ostinato web
 ```
 
-The web page also provides backend-owned arranger controls for six original
-arrangements: Modern Tango, Classic Tango, Classic Waltz, Bossa Nova, Swing
-Foxtrot, and Alpine Polka. Docker uses the installed GPL-licensed TimGM6mb
+The web page also provides backend-owned arranger controls for fourteen
+arrangements. Alongside six original tango, waltz, bossa, swing, and polka
+patterns, an attributed CC BY 4.0 groove pack adds soul, funk, soft pop,
+country, reggae, samba, cha-cha, and blues options. Docker uses the installed GPL-licensed TimGM6mb
 SoundFont through native FluidSynth; hosts without a configured SoundFont
 retain the procedural PCM fallback. Each style has a four-bar phrase,
 orchestrated intro and ending, rhythmic fills, combined bass/chord tempo
@@ -97,6 +98,7 @@ connection and is used only as arranger MIDI input. See the
 - [Computer-only testing](docs/computer-only-testing.md)
 - [Docker and USB passthrough](docs/docker.md)
 - [Real-time web/MIDI interface](docs/web-interface.md)
+- [Style library sources and licenses](docs/style-library-sources.md)
 - [Style format design contract](docs/style-format.md)
 
 ## System preparation
@@ -116,7 +118,7 @@ commit personal device names or an unverified FR-4X mapping as shared defaults.
   input, experimental built-in accompaniments through a selected host audio
   route, and the web surface with fake-backend automated tests.
 - Available with user-selected ports: raw MIDI monitoring/output, a 39-key
-  piano surface, a two-bass-row Stradella display, and six computer-generated
+  piano surface, a two-bass-row Stradella display, and fourteen computer-generated
   accompaniment styles through an explicitly selected host audio output.
 - Intentionally absent: hardware-validated FR-4X chord recognition, a general
   style-v1 loader, program/register automation, authenticated remote access,

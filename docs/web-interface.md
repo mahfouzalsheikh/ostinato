@@ -65,7 +65,8 @@ The web arranger does not require FR-4X External Seq. Playback and sends no
 arranger MIDI back to the accordion. The optional MIDI output selected in the
 MIDI wizard remains only for pressing notes on the browser simulator.
 
-Six original arrangements are available:
+Fourteen built-in arrangements are available. The first six are original
+Ostinato patterns:
 
 - **Modern Tango** — 4/4 at 120 BPM, with a dramatic 3+3+2 foundation,
   changing bass movement, syncopated piano/flute voicings, acoustic guitar, and a
@@ -84,6 +85,25 @@ Six original arrangements are available:
 - **Alpine Polka** — 2/4 at 124 BPM, with alternating root/fifth bass,
   offbeat chords, bright flute voicing, and a lively fourth-bar fill.
 
+An attributed human-groove pack adds:
+
+- **Motown Soul** — 4/4 at 104 BPM, with melodic bass, backbeat, and a
+  tambourine lift;
+- **Funk Pocket** — 4/4 at 112 BPM, with sixteenth-note bass movement,
+  clipped comping, and dynamic ghost notes;
+- **Soft Pop Ballad** — 4/4 at 83 BPM, with spacious acoustic harmony,
+  restrained drums, and lyrical flute answers;
+- **Country Two-Step** — 4/4 at 114 BPM, with alternating bass, acoustic
+  rhythm, and a train-beat pulse;
+- **Reggae One Drop** — 4/4 at 84 BPM, with deep bass, offbeat guitar, and a
+  sparse one-drop kit;
+- **Brazilian Samba** — 4/4 at 110 BPM, with layered syncopation and bright
+  percussion;
+- **New Orleans Cha-Cha** — 4/4 at 124 BPM, with tumbao-shaped bass, claves,
+  crisp guitar, and flute answers;
+- **Blues Shuffle** — 4/4 at 112 BPM, with triplet bass movement, shuffle
+  comping, and responsive fills.
+
 Choose **Style designer** while playback is stopped to make an editable style.
 Select a 2/4, 3/4, or 4/4 measure first; the designer then offers only rhythmic
 templates written for that meter instead of squeezing an incompatible pattern
@@ -97,7 +117,7 @@ fingered/picked/fretless bass guitar, double bass and orchestral contrabass,
 solo and ensemble strings, pizzicato/tremolo strings, harp, and woodwinds.
 General MIDI has no dedicated mandolin program, so **Mandolin-style pluck** is
 explicitly implemented with the steel acoustic-guitar sample, one octave up
-and shortened. The six built-in styles remain string-free by default; strings
+and shortened. The fourteen built-in styles remain string-free by default; strings
 are now an intentional custom choice.
 
 Saved styles appear in the main selector with a **Custom** label and can be

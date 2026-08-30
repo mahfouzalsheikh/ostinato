@@ -275,6 +275,30 @@ PALETTES: dict[str, SoundFontPalette] = {
         25, 0, 73, 25, SIDE_STICK_NOTE, SNARE_NOTE, RIDE_CYMBAL_NOTE, 1.85
     ),
     "alpine_polka": SoundFontPalette(25, 0, 73, 25, TAMBOURINE_NOTE, gain=1.8),
+    "motown_soul": SoundFontPalette(
+        25, 0, 73, 25, TAMBOURINE_NOTE, SNARE_NOTE, CLOSED_HIHAT_NOTE, 1.75
+    ),
+    "funk_pocket": SoundFontPalette(
+        25, 0, 73, 25, SIDE_STICK_NOTE, SNARE_NOTE, CLOSED_HIHAT_NOTE, 1.75
+    ),
+    "soft_pop": SoundFontPalette(
+        25, 0, 73, 25, RIDE_CYMBAL_NOTE, SIDE_STICK_NOTE, CLOSED_HIHAT_NOTE, 1.65
+    ),
+    "country_two_step": SoundFontPalette(
+        25, 25, 73, 25, TAMBOURINE_NOTE, SIDE_STICK_NOTE, CLOSED_HIHAT_NOTE, 1.7
+    ),
+    "reggae_one_drop": SoundFontPalette(
+        25, 25, 73, 25, CLAVES_NOTE, SIDE_STICK_NOTE, CLOSED_HIHAT_NOTE, 1.8
+    ),
+    "brazilian_samba": SoundFontPalette(
+        25, 25, 73, 25, MARACAS_NOTE, SIDE_STICK_NOTE, CLOSED_HIHAT_NOTE, 1.85
+    ),
+    "new_orleans_chacha": SoundFontPalette(
+        25, 25, 73, 25, CLAVES_NOTE, SIDE_STICK_NOTE, CLOSED_HIHAT_NOTE, 1.8
+    ),
+    "blues_shuffle": SoundFontPalette(
+        25, 0, 73, 25, SIDE_STICK_NOTE, SNARE_NOTE, RIDE_CYMBAL_NOTE, 1.8
+    ),
 }
 
 
@@ -619,29 +643,41 @@ class SoundFontArrangementRenderer:
                     pad_note_duration,
                 )
 
-        for onset in groove.kick_onsets:
+        for pulse, onset in enumerate(groove.kick_onsets):
             self._queue_drum(
                 bar_beat + onset,
                 start_beat,
                 end_beat,
                 KICK_NOTE,
-                self._velocity(98, levels.drums, dynamic),
+                self._velocity(
+                    98,
+                    levels.drums,
+                    dynamic * self._accent(groove.kick_accents, pulse),
+                ),
             )
-        for onset in groove.snare_onsets:
+        for pulse, onset in enumerate(groove.snare_onsets):
             self._queue_drum(
                 bar_beat + onset,
                 start_beat,
                 end_beat,
                 palette.snare_note,
-                self._velocity(84, levels.drums, dynamic),
+                self._velocity(
+                    84,
+                    levels.drums,
+                    dynamic * self._accent(groove.snare_accents, pulse),
+                ),
             )
-        for onset in groove.auxiliary_onsets:
+        for pulse, onset in enumerate(groove.auxiliary_onsets):
             self._queue_drum(
                 bar_beat + onset,
                 start_beat,
                 end_beat,
                 palette.auxiliary_note,
-                self._velocity(68, levels.percussion, dynamic),
+                self._velocity(
+                    68,
+                    levels.percussion,
+                    dynamic * self._accent(groove.auxiliary_accents, pulse),
+                ),
             )
         hat_onsets = (
             groove.hat_onsets

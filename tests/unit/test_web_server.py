@@ -134,7 +134,21 @@ class WebServerTests(unittest.TestCase):
                 "bossa_nova",
                 "swing_foxtrot",
                 "alpine_polka",
+                "motown_soul",
+                "funk_pocket",
+                "soft_pop",
+                "country_two_step",
+                "reggae_one_drop",
+                "brazilian_samba",
+                "new_orleans_chacha",
+                "blues_shuffle",
             ],
+        )
+        self.assertEqual(
+            sum(
+                "CC BY 4.0" in style["provenance"] for style in initial.json()["styles"]
+            ),
+            8,
         )
         self.assertTrue(all(style["description"] for style in initial.json()["styles"]))
         self.assertEqual(selected.json()["style"], "classic_waltz")
@@ -238,6 +252,37 @@ class WebServerTests(unittest.TestCase):
         self.assertEqual(preview_style.base_style_id, "classic_waltz")
         self.assertEqual(preview_tempo, 146)
         arranger.stop_style_preview.assert_called_once_with()
+
+    def test_new_groove_pack_style_can_be_previewed(self) -> None:
+        payload = default_custom_style_payload("funk_pocket")
+        arranger = create_autospec(LiveArrangerService, instance=True)
+        arranger.next_check_delay_seconds.return_value = 0.05
+        arranger.advance.return_value = {
+            "running": False,
+            "output_configured": True,
+        }
+        arranger.preview_custom_style.return_value = {
+            "style_previewing": True,
+            "preview_tempo_bpm": 112,
+        }
+        app = create_app(
+            MidiService(FakeMidiBackend()),
+            MidiProfileStore(Path(self.temporary.name) / "groove-profile.json"),
+            arranger,
+            self.audio_output_service,
+            CustomStyleStore(Path(self.temporary.name) / "groove-styles.json"),
+        )
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/styles/preview",
+                json={"style": payload, "tempo_bpm": 112},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        preview_style, preview_tempo = arranger.preview_custom_style.call_args.args
+        self.assertEqual(preview_style.base_style_id, "funk_pocket")
+        self.assertEqual(preview_tempo, 112)
 
     def test_audio_output_is_discovered_tested_and_saved_by_exact_id(self) -> None:
         available = self.client.get("/api/audio/outputs")

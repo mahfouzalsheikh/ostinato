@@ -630,6 +630,7 @@ class LiveArrangerService:
                     "description": style.description,
                     "default_tempo_bpm": style.default_tempo_bpm,
                     "beats_per_bar": style.beats_per_bar,
+                    "provenance": style.provenance,
                     "custom": False,
                 }
                 for style in DEMO_STYLES.values()

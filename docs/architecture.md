@@ -62,7 +62,7 @@ new continuous epoch/position segment.
 
 ## Current implementation boundary
 
-The web service renders six proof-of-concept styles as stereo PCM. The Docker
+The web service renders fourteen proof-of-concept styles as stereo PCM. The Docker
 runtime uses the package-provided TimGM6mb SoundFont through libfluidsynth;
 hardware-free development retains the deterministic procedural fallback. It is
 disabled until the performer selects an exact currently discovered PipeWire
@@ -75,7 +75,9 @@ All styles use four-bar intros, varying four-bar main phrases, and four-bar
 endings. Bass roles, comping, fills, backing pulses, accents, articulations, and
 timekeeper patterns are independently declared instead of being generically
 layered onto every genre. Their default sampled palette uses acoustic guitar,
-piano, flute, and General MIDI drums without a string preset. Custom styles
+piano, flute, and General MIDI drums without a string preset. Eight built-in
+grooves adapt CC BY 4.0 human drum performances; their provenance and
+transformations are recorded in `docs/style-library-sources.md`. Custom styles
 persist a validated General MIDI palette, per-role mix/register/note gate,
 drums setting, starting tempo, meter-compatible rhythmic-template reference,
 and one-to-four-measure main-loop length in an atomically replaced JSON

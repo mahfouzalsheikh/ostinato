@@ -55,7 +55,7 @@ class DemoArrangementRendererTests(unittest.TestCase):
         self.assertEqual(DemoArrangementRenderer.STYLE_NAME, "modern_tango")
         self.assertEqual(DemoArrangementRenderer.OUTPUT_MODE, "procedural_pcm")
 
-    def test_catalog_contains_six_distinct_original_styles(self) -> None:
+    def test_catalog_contains_original_and_attributed_groove_styles(self) -> None:
         self.assertEqual(
             set(DEMO_STYLES),
             {
@@ -65,6 +65,14 @@ class DemoArrangementRendererTests(unittest.TestCase):
                 "bossa_nova",
                 "swing_foxtrot",
                 "alpine_polka",
+                "motown_soul",
+                "funk_pocket",
+                "soft_pop",
+                "country_two_step",
+                "reggae_one_drop",
+                "brazilian_samba",
+                "new_orleans_chacha",
+                "blues_shuffle",
             },
         )
         self.assertEqual(DEMO_STYLES["modern_tango"].beats_per_bar, 4)
@@ -72,6 +80,10 @@ class DemoArrangementRendererTests(unittest.TestCase):
         self.assertEqual(DEMO_STYLES["classic_waltz"].beats_per_bar, 3)
         self.assertEqual(DEMO_STYLES["alpine_polka"].beats_per_bar, 2)
         self.assertTrue(all(style.description for style in DEMO_STYLES.values()))
+        self.assertEqual(
+            sum("CC BY 4.0" in style.provenance for style in DEMO_STYLES.values()),
+            8,
+        )
 
         config = DemoAudioConfig()
         rendered = {

@@ -157,6 +157,26 @@ class SoundFontArrangementRendererTests(unittest.TestCase):
         channels = {channel for channel, _note, _velocity in engine.note_ons}
         self.assertTrue({0, 1, 2, 3, DRUM_CHANNEL}.issubset(channels))
 
+    def test_human_groove_pack_preserves_per_hit_drum_dynamics(self) -> None:
+        renderer, engine = self.create_renderer(
+            "funk_pocket", tempo_bpm=60, sample_rate=100
+        )
+
+        renderer.render(400, chord())
+
+        kick_velocities = {
+            velocity
+            for channel, note, velocity in engine.note_ons
+            if channel == DRUM_CHANNEL and note == 36
+        }
+        snare_velocities = {
+            velocity
+            for channel, note, velocity in engine.note_ons
+            if channel == DRUM_CHANNEL and note == 38
+        }
+        self.assertGreater(len(kick_velocities), 1)
+        self.assertGreater(len(snare_velocities), 1)
+
     def test_classic_tango_uses_acoustic_roles_without_a_drum_kit(self) -> None:
         renderer, engine = self.create_renderer(
             "classic_tango", tempo_bpm=60, sample_rate=100
