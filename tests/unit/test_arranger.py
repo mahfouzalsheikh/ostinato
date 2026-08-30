@@ -10,6 +10,7 @@ from ostinato.arranger import (
     BassTempoTracker,
     LiveArrangerService,
     classify_chord_notes,
+    predict_harmony,
     style_rhythm_spans,
 )
 from ostinato.computer_audio import TRANSPORT_TICKS_PER_BEAT, DemoSection
@@ -81,6 +82,7 @@ def midi_event(channel: int, note: int, timestamp_ns: int) -> dict[str, object]:
 def profile() -> dict[str, object]:
     return {
         "roles": {
+            "treble": {"primary_channel": 1},
             "bass": {"primary_channel": 2},
             "chord": {"primary_channel": 3},
         }
@@ -100,6 +102,41 @@ class ChordClassifierTests(unittest.TestCase):
         self.assertEqual(d_mode_minor.root_pitch_class, 0)
         self.assertEqual(d_mode_minor.quality, ChordQuality.MINOR)
         self.assertEqual(d_mode_minor.transmission, "d-mode")
+
+    def test_prediction_distinguishes_new_root_from_alternating_bass_by_meter(
+        self,
+    ) -> None:
+        d_minor = ChordState(2, ChordQuality.MINOR, None, 1.0, ("test",), 0)
+
+        downbeat = predict_harmony(9, d_minor, harmonic_boundary=True)
+        within_measure = predict_harmony(9, d_minor, harmonic_boundary=False)
+
+        self.assertEqual(
+            (downbeat.root_pitch_class, downbeat.quality),
+            (9, ChordQuality.MAJOR),
+        )
+        self.assertEqual(
+            (within_measure.root_pitch_class, within_measure.quality),
+            (2, ChordQuality.MINOR),
+        )
+
+    def test_active_melody_can_select_a_seventh_or_preserve_prior_harmony(
+        self,
+    ) -> None:
+        d_minor = ChordState(2, ChordQuality.MINOR, None, 1.0, ("test",), 0)
+
+        a_seventh = predict_harmony(
+            9, d_minor, active_melody_notes=(67,), harmonic_boundary=True
+        )
+        d_minor_over_a = predict_harmony(
+            9, d_minor, active_melody_notes=(65,), harmonic_boundary=True
+        )
+
+        self.assertEqual(a_seventh.quality, ChordQuality.DOMINANT_SEVENTH)
+        self.assertEqual(
+            (d_minor_over_a.root_pitch_class, d_minor_over_a.quality),
+            (2, ChordQuality.MINOR),
+        )
 
 
 class BassTempoTrackerTests(unittest.TestCase):
@@ -188,7 +225,7 @@ class LiveArrangerServiceTests(unittest.TestCase):
         self.assertEqual(status["tempo_source"], "left hand · bass + chords")
         self.assertEqual(status["chord"], "C")
         assert self.audio.chord is not None
-        self.assertEqual(self.audio.chord.bass_pitch_class, 0)
+        self.assertIsNone(self.audio.chord.bass_pitch_class)
 
     def test_alternating_bass_and_chord_attacks_drive_auto_tempo(self) -> None:
         self.arranger.handle_midi_event(midi_event(2, 48, 0))
@@ -252,22 +289,64 @@ class LiveArrangerServiceTests(unittest.TestCase):
         assert self.audio.chord is not None
         self.assertEqual(self.audio.chord.root_pitch_class, 7)
 
-    def test_bass_flow_updates_the_current_harmony_without_waiting_for_a_chord(
+    def test_downbeat_bass_predicts_then_melody_refines_and_chord_confirms(
         self,
     ) -> None:
-        self.arranger.handle_midi_event(midi_event(2, 48, 0))
-        for note in (48, 52, 55):
+        self.arranger.command("style", "classic_waltz")
+        for note in (50, 53, 57):
             self.arranger.handle_midi_event(midi_event(3, note, 0))
         self.arranger.advance(CHORD_COALESCE_NS)
+        self.arranger.command("start")
+        self.audio.position_ticks = 3 * TRANSPORT_TICKS_PER_BEAT
 
-        self.arranger.handle_midi_event(midi_event(2, 55, 20_000_000))
+        self.arranger.handle_midi_event(midi_event(2, 57, 20_000_000))
+        bass_prediction = self.arranger.snapshot()
+        self.arranger.handle_midi_event(midi_event(1, 67, 21_000_000))
+        melody_refinement = self.arranger.snapshot()
+
+        self.assertEqual(bass_prediction["chord"], "A")
+        self.assertEqual(bass_prediction["harmony_source"], "bass + melody prediction")
+        self.assertEqual(melody_refinement["chord"], "A7")
+        self.assertEqual(melody_refinement["bass"], "A")
+        assert self.audio.chord is not None
+        self.assertIsNone(self.audio.chord.bass_pitch_class)
+        self.assertLess(self.audio.chord.confidence, 1.0)
+
+        for note in (50, 53, 57):
+            self.arranger.handle_midi_event(midi_event(3, note, 30_000_000))
+        confirmed = self.arranger.advance(30_000_000 + CHORD_COALESCE_NS)
+
+        self.assertEqual(confirmed["chord"], "Dm")
+        self.assertEqual(confirmed["harmony_source"], "chord button")
+        self.assertIsNone(confirmed["prediction_confidence"])
+
+    def test_non_downbeat_fifth_bass_keeps_the_confirmed_chord(self) -> None:
+        for note in (50, 53, 57):
+            self.arranger.handle_midi_event(midi_event(3, note, 0))
+        self.arranger.advance(CHORD_COALESCE_NS)
+        self.arranger.command("start")
+        self.audio.position_ticks = TRANSPORT_TICKS_PER_BEAT
+
+        self.arranger.handle_midi_event(midi_event(2, 57, 20_000_000))
         status = self.arranger.snapshot()
 
-        self.assertEqual(status["chord"], "C/G")
-        self.assertEqual(status["bass"], "G")
+        self.assertEqual(status["chord"], "Dm")
+        self.assertEqual(status["harmony_source"], "bass + melody prediction")
+
+    def test_bass_note_does_not_choose_an_ambiguous_diminished_chord_root(
+        self,
+    ) -> None:
+        self.arranger.handle_midi_event(midi_event(2, 51, 0))
+        for note in (48, 51, 54, 57):
+            self.arranger.handle_midi_event(midi_event(3, note, 0))
+
+        status = self.arranger.advance(CHORD_COALESCE_NS)
+
+        self.assertEqual(status["chord"], "Cdim")
+        self.assertEqual(status["bass"], "Eb")
         assert self.audio.chord is not None
-        self.assertEqual(self.audio.chord.bass_pitch_class, 7)
-        self.assertEqual(self.audio.chord.recognized_at_ns, 20_000_000)
+        self.assertEqual(self.audio.chord.root_pitch_class, 0)
+        self.assertIsNone(self.audio.chord.bass_pitch_class)
 
     def test_sync_arms_intro_starts_on_left_hand_and_stops_after_two_bars(self) -> None:
         self.arranger.command("sync", True)
