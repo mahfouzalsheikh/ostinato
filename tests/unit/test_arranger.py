@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import unittest
+from typing import cast
 
 from ostinato.arranger import (
     CHORD_COALESCE_NS,
+    STYLE_PREVIEW_DURATION_NS,
     ArrangerError,
     BassTempoTracker,
     LiveArrangerService,
@@ -12,6 +14,7 @@ from ostinato.arranger import (
 )
 from ostinato.computer_audio import TRANSPORT_TICKS_PER_BEAT, DemoSection
 from ostinato.domain import ChordQuality, ChordState
+from ostinato.style_designer import CustomStyle, default_custom_style_payload
 
 
 class FakeArrangerAudio:
@@ -25,13 +28,17 @@ class FakeArrangerAudio:
         self.device: str | None = None
         self.error: str | None = None
         self.position_ticks: int | None = 0
+        self.custom_style: CustomStyle | None = None
 
     @property
     def section(self) -> DemoSection:
         return self._section
 
-    def select_style(self, style_id: str) -> None:
+    def select_style(
+        self, style_id: str, custom_style: CustomStyle | None = None
+    ) -> None:
         self.style = style_id
+        self.custom_style = custom_style
 
     def set_tempo(self, tempo_bpm: int) -> None:
         self.tempo = tempo_bpm
@@ -311,6 +318,96 @@ class LiveArrangerServiceTests(unittest.TestCase):
 
         self.assertIsNone(status["position_ticks"])
         self.assertIsNone(status["beat_index"])
+
+    def test_saved_custom_style_uses_its_template_tempo_and_audio_palette(self) -> None:
+        value = default_custom_style_payload("classic_waltz")
+        value["id"] = "custom-123456abcdef"
+        value["name"] = "My small waltz"
+        value["tempo_bpm"] = 104
+        custom = CustomStyle.from_mapping(value)
+        self.arranger.configure_custom_styles((custom,))
+
+        status = self.arranger.command("style", custom.id)
+
+        self.assertEqual(status["style"], custom.id)
+        self.assertEqual(status["tempo_bpm"], 104)
+        self.assertEqual(status["beats_per_bar"], 3)
+        self.assertEqual(self.audio.style, "classic_waltz")
+        self.assertEqual(self.audio.custom_style, custom)
+        styles = cast(list[dict[str, object]], status["styles"])
+        self.assertTrue(
+            next(style for style in styles if style["id"] == custom.id)["custom"]
+        )
+
+    def test_unsaved_preview_uses_independent_tempo_and_restores_audio(self) -> None:
+        value = default_custom_style_payload("classic_waltz")
+        value["id"] = "custom-123456abcdef"
+        value["backing"] = {
+            "instrument": "string_ensemble",
+            "volume": 44,
+            "octave": 1,
+            "gate_percent": 130,
+        }
+        preview = CustomStyle.from_mapping(value)
+
+        status = self.arranger.preview_custom_style(preview, 138)
+
+        self.assertIs(status["style_previewing"], True)
+        self.assertEqual(status["preview_tempo_bpm"], 138)
+        self.assertEqual(status["style"], "modern_tango")
+        self.assertEqual(self.audio.style, "classic_waltz")
+        self.assertEqual(self.audio.custom_style, preview)
+        self.assertEqual(self.audio.tempo, 138)
+        assert self.audio.chord is not None
+        self.assertEqual(self.audio.chord.name, "C")
+        self.assertEqual(self.audio.section, DemoSection.MAIN)
+
+        restored = self.arranger.stop_style_preview()
+
+        self.assertIs(restored["style_previewing"], False)
+        self.assertIsNone(restored["preview_tempo_bpm"])
+        self.assertEqual(self.audio.style, "modern_tango")
+        self.assertIsNone(self.audio.custom_style)
+        self.assertEqual(self.audio.tempo, 120)
+        self.assertIsNone(self.audio.chord)
+        self.assertEqual(self.audio.section, DemoSection.STOPPED)
+
+    def test_live_command_stops_preview_before_starting_arranger(self) -> None:
+        value = default_custom_style_payload()
+        value["id"] = "custom-123456abcdef"
+        preview = CustomStyle.from_mapping(value)
+        self.arranger.preview_custom_style(preview, 90)
+
+        status = self.arranger.command("start")
+
+        self.assertIs(status["style_previewing"], False)
+        self.assertIs(status["running"], True)
+        self.assertEqual(self.audio.style, "modern_tango")
+        self.assertIsNone(self.audio.custom_style)
+        self.assertEqual(self.audio.tempo, 120)
+
+    def test_unsaved_preview_stops_automatically_after_bounded_audition(self) -> None:
+        value = default_custom_style_payload()
+        value["id"] = "custom-123456abcdef"
+        preview = CustomStyle.from_mapping(value)
+        self.arranger.preview_custom_style(preview, 110)
+
+        self.now_ns = STYLE_PREVIEW_DURATION_NS
+        status = self.arranger.advance()
+
+        self.assertIs(status["style_previewing"], False)
+        self.assertEqual(self.audio.style, "modern_tango")
+        self.assertEqual(self.audio.tempo, 120)
+        self.assertEqual(self.audio.section, DemoSection.STOPPED)
+
+    def test_preview_requires_the_selected_audio_output(self) -> None:
+        arranger = LiveArrangerService(FakeArrangerAudio())
+        value = default_custom_style_payload()
+        value["id"] = "custom-123456abcdef"
+        preview = CustomStyle.from_mapping(value)
+
+        with self.assertRaisesRegex(ArrangerError, "audio output"):
+            arranger.preview_custom_style(preview, 120)
 
     def test_ending_and_panic_reach_audio_boundary(self) -> None:
         self.arranger.command("start")

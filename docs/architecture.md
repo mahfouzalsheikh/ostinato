@@ -72,16 +72,28 @@ that exact PCM identifier is still available. No ALSA card or device is a
 shared default.
 
 All styles use four-bar intros, varying four-bar main phrases, and four-bar
-endings. Bass roles, comping, reeds, pads, accents, articulations, and
+endings. Bass roles, comping, fills, backing pulses, accents, articulations, and
 timekeeper patterns are independently declared instead of being generically
-layered onto every genre. The web service fuses deduplicated attacks from the saved bass and
+layered onto every genre. Their default sampled palette uses acoustic guitar,
+piano, flute, and General MIDI drums without a string preset. Custom styles
+persist a validated General MIDI palette, per-role mix/register/note gate,
+drums setting, starting tempo, meter-compatible rhythmic-template reference,
+and one-to-four-measure main-loop length in an atomically replaced JSON
+document. Existing schema-v1 style documents migrate in memory to schema v2.
+An unsaved designer preview temporarily reconfigures the same backend-owned
+audio boundary, never a browser synthesizer. It is allowed only while the live
+transport is stopped and an exact audio output is configured. Stop, timeout,
+modal cleanup, persistence operations, and normal transport commands restore
+the selected style, tempo, and harmony.
+The web service fuses deduplicated attacks from the saved bass and
 chord channels, then normalizes their movement against the selected style's
 rhythmic spacing. Bass-note changes update the accompaniment inversion
 immediately; new chord-note clusters are isolated from notes still held from
 the preceding chord. Optional left-hand sync starts and stops from the same
 activity stream. It is still a small hard-coded arranger rather than the future
-validated style-v1 loader, and its musical sophistication is not claimed to
-match a commercial hardware arranger.
+validated style-v1 loader. The custom-style document is deliberately a small
+editable overlay rather than a MIDI phrase authoring format, and its musical
+sophistication is not claimed to match a commercial hardware arranger.
 
 The CLI `keyboard --play` harness still writes to the default `aplay` route;
 the web service differs by requiring an explicit route. Automated tests do not

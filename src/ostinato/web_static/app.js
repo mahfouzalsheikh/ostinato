@@ -16,6 +16,9 @@ const arrangerStyle = $("#arranger-style");
 const arrangerMessage = $("#arranger-message");
 const fixedTempo = $("#arranger-fixed-tempo");
 const audioOutputDialog = $("#audio-output-dialog");
+const styleDesignerDialog = $("#style-designer-dialog");
+const styleDesignerForm = $("#style-designer-form");
+const designerStyleSelect = $("#designer-style-select");
 const beatLights = $("#arranger-beat-lights");
 const beatLabel = $("#arranger-beat-label");
 
@@ -58,6 +61,17 @@ let captures = freshCaptures();
 let detection = null;
 let arrangerStatus = null;
 let beatClock = null;
+let styleDesignerCatalog = null;
+let designerDeleteArmed = false;
+let designerPreviewing = false;
+let designerPreviewRestartTimer = null;
+
+const DESIGNER_PREVIEW_RESTART_DELAY_MS = 180;
+const DESIGNER_NON_AUDIO_FIELDS = new Set([
+  "designer-name",
+  "designer-preview-tempo",
+  "designer-style-select",
+]);
 
 function setSocketState(state, label) {
   socketLed.className = `led ${state}`;
@@ -165,7 +179,8 @@ function renderArrangerStatus(status) {
   const optionSignature = status.styles.map((style) => style.id).join(":");
   if (arrangerStyle.dataset.options !== optionSignature) {
     arrangerStyle.replaceChildren(...status.styles.map((style) => {
-      const option = new Option(`${style.name} · ${style.beats_per_bar}/4`, style.id);
+      const suffix = style.custom ? " · Custom" : "";
+      const option = new Option(`${style.name} · ${style.beats_per_bar}/4${suffix}`, style.id);
       option.title = style.description ?? "";
       return option;
     }));
@@ -173,6 +188,7 @@ function renderArrangerStatus(status) {
   }
   arrangerStyle.value = status.style;
   arrangerStyle.disabled = status.running;
+  $("#open-style-designer").disabled = status.running;
   $("#arranger-tempo").textContent = status.tempo_bpm;
   $("#arranger-tempo-source").textContent = status.tempo_source;
   const fixed = status.tempo_mode === "fixed";
@@ -195,6 +211,7 @@ function renderArrangerStatus(status) {
   $("#arranger-ending").disabled = !status.running;
   $("#arranger-sync").setAttribute("aria-pressed", String(status.sync_enabled));
   renderBeatIndicator(status, 0);
+  if (styleDesignerDialog.open) renderDesignerPreviewState(status);
 
   if (status.error) {
     setArrangerMessage(status.error, true);
@@ -323,6 +340,251 @@ async function saveAudioOutput() {
   } catch (error) {
     setAudioOutputMessage(error.message, true);
   }
+}
+
+function setStyleDesignerMessage(message, error = false) {
+  const element = $("#style-designer-message");
+  element.textContent = message;
+  element.classList.toggle("error", error);
+}
+
+function cloneStyle(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function populateDesignerOptions(catalog) {
+  designerStyleSelect.replaceChildren(new Option("Create a new style", ""));
+  for (const style of catalog.styles) {
+    designerStyleSelect.append(new Option(style.name, style.id));
+  }
+  $("#designer-meter").replaceChildren(...catalog.meters.map((meter) => (
+    new Option(`${meter}/4`, meter)
+  )));
+  for (const card of document.querySelectorAll(".designer-layer")) {
+    const select = card.querySelector('[data-field="instrument"]');
+    const groups = new Map();
+    for (const instrument of catalog.instruments) {
+      if (!groups.has(instrument.category)) {
+        groups.set(instrument.category, document.createElement("optgroup"));
+        groups.get(instrument.category).label = instrument.category;
+      }
+      groups.get(instrument.category).append(new Option(instrument.name, instrument.id));
+    }
+    select.replaceChildren(...groups.values());
+  }
+}
+
+function populateDesignerTemplates(meter, selectedId = "") {
+  const templates = styleDesignerCatalog?.templates.filter(
+    (template) => template.beats_per_bar === Number(meter),
+  ) ?? [];
+  const select = $("#designer-template");
+  select.replaceChildren(...templates.map((template) => (
+    new Option(template.name, template.id)
+  )));
+  if (templates.some((template) => template.id === selectedId)) {
+    select.value = selectedId;
+  }
+  return templates;
+}
+
+function resetDesignerDelete() {
+  designerDeleteArmed = false;
+  $("#designer-delete").textContent = "Delete style";
+}
+
+function renderDesignerPreviewState(status) {
+  designerPreviewing = Boolean(status?.style_previewing);
+  const preview = $(".designer-preview");
+  preview.classList.toggle("playing", designerPreviewing);
+  $("#designer-preview-play").textContent = designerPreviewing ? "Restart" : "Preview";
+  $("#designer-preview-play").setAttribute("aria-pressed", String(designerPreviewing));
+  $("#designer-preview-play").disabled = !status?.output_configured;
+  $("#designer-preview-stop").disabled = !designerPreviewing;
+  if (designerPreviewing && status.preview_tempo_bpm != null) {
+    const tempo = $("#designer-preview-tempo");
+    if (document.activeElement !== tempo) {
+      tempo.value = status.preview_tempo_bpm;
+      $("#designer-preview-tempo-value").textContent = status.preview_tempo_bpm;
+    }
+  }
+}
+
+function renderDesignerStyle(style, identifier = "") {
+  const value = cloneStyle(style);
+  designerStyleSelect.value = identifier;
+  $("#designer-name").value = value.name;
+  $("#designer-meter").value = value.beats_per_bar;
+  populateDesignerTemplates(value.beats_per_bar, value.base_style_id);
+  $("#designer-phrase-bars").value = value.phrase_bars;
+  $("#designer-tempo").value = value.tempo_bpm;
+  $("#designer-tempo-value").textContent = value.tempo_bpm;
+  $("#designer-preview-tempo").value = value.tempo_bpm;
+  $("#designer-preview-tempo-value").textContent = value.tempo_bpm;
+  for (const layerName of ["bass", "comp", "fill", "backing"]) {
+    const card = document.querySelector(`.designer-layer[data-layer="${layerName}"]`);
+    card.querySelector('[data-field="instrument"]').value = value[layerName].instrument;
+    card.querySelector('[data-field="volume"]').value = value[layerName].volume;
+    card.querySelector('[data-field="volume-output"]').textContent = value[layerName].volume;
+    card.querySelector('[data-field="octave"]').value = value[layerName].octave;
+    card.querySelector('[data-field="gate"]').value = value[layerName].gate_percent;
+    card.querySelector('[data-field="gate-output"]').textContent = value[layerName].gate_percent;
+  }
+  $("#designer-drums-enabled").checked = value.drums_enabled;
+  $("#designer-drums-volume").value = value.drums_volume;
+  $("#designer-drums-volume-value").textContent = value.drums_volume;
+  $("#designer-drums-volume").disabled = !value.drums_enabled;
+  const editing = Boolean(identifier);
+  $("#designer-delete").hidden = !editing;
+  $("#designer-save").textContent = editing ? "Update style" : "Save new style";
+  resetDesignerDelete();
+}
+
+function newDesignerStyle() {
+  if (!styleDesignerCatalog) return;
+  renderDesignerStyle(styleDesignerCatalog.defaults);
+  setStyleDesignerMessage("New style ready. Choose a template and shape your ensemble.");
+}
+
+function selectedDesignerStyle() {
+  return styleDesignerCatalog?.styles.find((style) => style.id === designerStyleSelect.value);
+}
+
+async function openStyleDesigner() {
+  try {
+    styleDesignerCatalog = await api("/api/styles");
+    populateDesignerOptions(styleDesignerCatalog);
+    const selected = styleDesignerCatalog.styles.find(
+      (style) => style.id === arrangerStatus?.style,
+    );
+    if (selected) renderDesignerStyle(selected, selected.id);
+    else newDesignerStyle();
+    renderDesignerPreviewState(arrangerStatus);
+    if (!arrangerStatus?.output_configured) {
+      setStyleDesignerMessage(
+        "Choose an accompaniment audio output before using Preview.",
+        true,
+      );
+    }
+    if (!styleDesignerDialog.open) styleDesignerDialog.showModal();
+  } catch (error) {
+    setArrangerMessage(`Could not load the style designer: ${error.message}`, true);
+  }
+}
+
+function collectDesignerStyle() {
+  const value = {
+    schema_version: 2,
+    name: $("#designer-name").value.trim(),
+    base_style_id: $("#designer-template").value,
+    beats_per_bar: Number($("#designer-meter").value),
+    phrase_bars: Number($("#designer-phrase-bars").value),
+    tempo_bpm: Number($("#designer-tempo").value),
+    drums_enabled: $("#designer-drums-enabled").checked,
+    drums_volume: Number($("#designer-drums-volume").value),
+  };
+  for (const layerName of ["bass", "comp", "fill", "backing"]) {
+    const card = document.querySelector(`.designer-layer[data-layer="${layerName}"]`);
+    value[layerName] = {
+      instrument: card.querySelector('[data-field="instrument"]').value,
+      volume: Number(card.querySelector('[data-field="volume"]').value),
+      octave: Number(card.querySelector('[data-field="octave"]').value),
+      gate_percent: Number(card.querySelector('[data-field="gate"]').value),
+    };
+  }
+  return value;
+}
+
+async function saveDesignerStyle(event) {
+  event.preventDefault();
+  const identifier = designerStyleSelect.value;
+  try {
+    await stopDesignerPreview(true);
+    setStyleDesignerMessage(identifier ? "Updating style…" : "Saving new style…");
+    const saved = await api(identifier ? `/api/styles/${identifier}` : "/api/styles", {
+      method: identifier ? "PUT" : "POST",
+      body: JSON.stringify(collectDesignerStyle()),
+    });
+    styleDesignerCatalog = await api("/api/styles");
+    populateDesignerOptions(styleDesignerCatalog);
+    renderDesignerStyle(saved, saved.id);
+    await loadArrangerStatus();
+    if (arrangerStatus?.style !== saved.id) await arrangerCommand("style", saved.id);
+    setStyleDesignerMessage(`Saved “${saved.name}”. It is now the selected arranger style.`);
+  } catch (error) {
+    setStyleDesignerMessage(error.message, true);
+  }
+}
+
+async function deleteDesignerStyle() {
+  const style = selectedDesignerStyle();
+  if (!style) return;
+  if (!designerDeleteArmed) {
+    designerDeleteArmed = true;
+    $("#designer-delete").textContent = "Confirm delete";
+    setStyleDesignerMessage(`Press Confirm delete to remove “${style.name}”.`);
+    return;
+  }
+  try {
+    await stopDesignerPreview(true);
+    await api(`/api/styles/${style.id}`, { method: "DELETE" });
+    styleDesignerCatalog = await api("/api/styles");
+    populateDesignerOptions(styleDesignerCatalog);
+    newDesignerStyle();
+    await loadArrangerStatus();
+    setStyleDesignerMessage(`Deleted “${style.name}”.`);
+  } catch (error) {
+    setStyleDesignerMessage(error.message, true);
+  }
+}
+
+async function startDesignerPreview() {
+  clearTimeout(designerPreviewRestartTimer);
+  designerPreviewRestartTimer = null;
+  try {
+    const tempo = Number($("#designer-preview-tempo").value);
+    setStyleDesignerMessage(`Starting unsaved preview at ${tempo} BPM…`);
+    const status = await api("/api/styles/preview", {
+      method: "POST",
+      body: JSON.stringify({ style: collectDesignerStyle(), tempo_bpm: tempo }),
+    });
+    renderDesignerPreviewState(status);
+    setStyleDesignerMessage(
+      `Previewing the unsaved style at ${tempo} BPM in C major. It stops automatically after 30 seconds.`,
+    );
+  } catch (error) {
+    renderDesignerPreviewState(arrangerStatus);
+    setStyleDesignerMessage(error.message, true);
+  }
+}
+
+async function stopDesignerPreview(quiet = false) {
+  clearTimeout(designerPreviewRestartTimer);
+  designerPreviewRestartTimer = null;
+  if (!designerPreviewing && !arrangerStatus?.style_previewing) return;
+  try {
+    const status = await api("/api/styles/preview", { method: "DELETE" });
+    arrangerStatus = status;
+    renderDesignerPreviewState(status);
+    if (!quiet) setStyleDesignerMessage("Preview stopped. The live arranger is restored.");
+  } catch (error) {
+    if (!quiet) setStyleDesignerMessage(error.message, true);
+  }
+}
+
+function scheduleDesignerPreviewRestart(target, delay = DESIGNER_PREVIEW_RESTART_DELAY_MS) {
+  if (!designerPreviewing || DESIGNER_NON_AUDIO_FIELDS.has(target.id)) return;
+  clearTimeout(designerPreviewRestartTimer);
+  setStyleDesignerMessage("Updating the live preview…");
+  designerPreviewRestartTimer = setTimeout(() => {
+    designerPreviewRestartTimer = null;
+    if (designerPreviewing && styleDesignerDialog.open) startDesignerPreview();
+  }, delay);
+}
+
+async function closeStyleDesigner() {
+  await stopDesignerPreview(true);
+  styleDesignerDialog.close();
 }
 
 function styleName(styleId) {
@@ -697,6 +959,85 @@ accordion.addEventListener("unmapped-button", () => {
 });
 
 arrangerStyle.addEventListener("change", () => arrangerCommand("style", arrangerStyle.value));
+$("#open-style-designer").addEventListener("click", openStyleDesigner);
+$("[data-close-style-designer]").addEventListener("click", closeStyleDesigner);
+styleDesignerDialog.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closeStyleDesigner();
+});
+styleDesignerForm.addEventListener("submit", saveDesignerStyle);
+designerStyleSelect.addEventListener("change", async () => {
+  const wasPreviewing = designerPreviewing;
+  await stopDesignerPreview(true);
+  const style = selectedDesignerStyle();
+  if (style) {
+    renderDesignerStyle(style, style.id);
+    setStyleDesignerMessage(`Editing “${style.name}”.`);
+  } else {
+    newDesignerStyle();
+  }
+  if (wasPreviewing) await startDesignerPreview();
+});
+$("#designer-new").addEventListener("click", async () => {
+  const wasPreviewing = designerPreviewing;
+  await stopDesignerPreview(true);
+  newDesignerStyle();
+  if (wasPreviewing) await startDesignerPreview();
+});
+$("#designer-delete").addEventListener("click", deleteDesignerStyle);
+$("#designer-preview-play").addEventListener("click", startDesignerPreview);
+$("#designer-preview-stop").addEventListener("click", () => stopDesignerPreview());
+$("#designer-preview-tempo").addEventListener("input", ({ target }) => {
+  $("#designer-preview-tempo-value").textContent = target.value;
+});
+$("#designer-preview-tempo").addEventListener("change", () => {
+  if (designerPreviewing) startDesignerPreview();
+});
+$("#designer-meter").addEventListener("change", ({ target }) => {
+  const templates = populateDesignerTemplates(target.value);
+  const template = templates[0];
+  if (!template) return;
+  $("#designer-template").value = template.id;
+  if (!designerStyleSelect.value) {
+    $("#designer-tempo").value = template.tempo_bpm;
+    $("#designer-tempo-value").textContent = template.tempo_bpm;
+  }
+});
+$("#designer-template").addEventListener("change", ({ target }) => {
+  const template = styleDesignerCatalog?.templates.find((item) => item.id === target.value);
+  if (!template || designerStyleSelect.value) return;
+  $("#designer-tempo").value = template.tempo_bpm;
+  $("#designer-tempo-value").textContent = template.tempo_bpm;
+});
+$("#designer-tempo").addEventListener("input", ({ target }) => {
+  $("#designer-tempo-value").textContent = target.value;
+  if (!designerPreviewing) {
+    $("#designer-preview-tempo").value = target.value;
+    $("#designer-preview-tempo-value").textContent = target.value;
+  }
+});
+for (const slider of document.querySelectorAll('.designer-layer [data-field="volume"]')) {
+  slider.addEventListener("input", ({ target }) => {
+    target.closest(".designer-layer").querySelector('[data-field="volume-output"]').textContent = target.value;
+  });
+}
+for (const slider of document.querySelectorAll('.designer-layer [data-field="gate"]')) {
+  slider.addEventListener("input", ({ target }) => {
+    target.closest(".designer-layer").querySelector('[data-field="gate-output"]').textContent = target.value;
+  });
+}
+$("#designer-drums-enabled").addEventListener("change", ({ target }) => {
+  $("#designer-drums-volume").disabled = !target.checked;
+});
+$("#designer-drums-volume").addEventListener("input", ({ target }) => {
+  $("#designer-drums-volume-value").textContent = target.value;
+});
+styleDesignerForm.addEventListener("change", ({ target }) => {
+  scheduleDesignerPreviewRestart(target, 40);
+});
+styleDesignerForm.addEventListener("input", ({ target }) => {
+  scheduleDesignerPreviewRestart(target);
+});
 $("#arranger-tempo-mode").addEventListener("click", () => {
   const mode = arrangerStatus?.tempo_mode === "fixed" ? "bass_auto" : "fixed";
   arrangerCommand("tempo_mode", mode);
@@ -715,7 +1056,7 @@ $("#arranger-sync").addEventListener("click", () => {
 });
 
 document.addEventListener("keydown", (event) => {
-  if (event.repeat || wizard.open || audioOutputDialog.open) return;
+  if (event.repeat || wizard.open || audioOutputDialog.open || styleDesignerDialog.open) return;
   const target = event.target;
   if (target instanceof HTMLElement
       && (target.isContentEditable || ["INPUT", "SELECT", "TEXTAREA", "BUTTON"].includes(target.tagName))) {

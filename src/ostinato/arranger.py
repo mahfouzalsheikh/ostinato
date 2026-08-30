@@ -24,6 +24,7 @@ from ostinato.computer_audio import (
     AudioPlaybackError,
     DemoAudioConfig,
     DemoSection,
+    DemoStyleDefinition,
     PcmSink,
     RealtimeDemoArranger,
     open_pcm_sink,
@@ -31,11 +32,13 @@ from ostinato.computer_audio import (
 from ostinato.domain import PITCH_CLASS_NAMES, ChordQuality, ChordState
 from ostinato.keyboard_input import MAX_TEMPO_BPM, MIN_TEMPO_BPM
 from ostinato.soundfont_audio import SoundFontArrangementRenderer
+from ostinato.style_designer import CustomStyle
 
 JsonObject = dict[str, object]
 CHORD_COALESCE_NS = 6_000_000
 MIN_LEFT_HAND_ATTACK_GAP_NS = 110_000_000
 SYNC_STOP_BARS = 2
+STYLE_PREVIEW_DURATION_NS = 30_000_000_000
 TEMPO_MODE_AUTO = "bass_auto"
 TEMPO_MODE_FIXED = "fixed"
 
@@ -181,15 +184,19 @@ class BassTempoTracker:
         return self._stable_bpm
 
 
-def style_rhythm_spans(style_id: str) -> tuple[float, ...]:
+def style_rhythm_spans(
+    style_id: str, phrase_bars: int | None = None
+) -> tuple[float, ...]:
     """Return plausible beat gaps between bass and chord attacks for a style."""
 
     renderer = DEMO_STYLES[style_id].renderer
-    phrase_beats = len(renderer._GROOVE) * renderer.BEATS_PER_BAR
+    measure_count = phrase_bars or len(renderer._GROOVE)
+    grooves = renderer._GROOVE[:measure_count]
+    phrase_beats = len(grooves) * renderer.BEATS_PER_BAR
     positions = sorted(
         {
             (bar * renderer.BEATS_PER_BAR) + onset
-            for bar, groove in enumerate(renderer._GROOVE)
+            for bar, groove in enumerate(grooves)
             for onset in (*groove.bass_onsets, *groove.chord_onsets)
         }
     )
@@ -218,7 +225,9 @@ class ArrangerAudio(Protocol):
     def position_ticks(self) -> int | None:
         """Return the rendered transport position in integer quarter-note ticks."""
 
-    def select_style(self, style_id: str) -> None: ...
+    def select_style(
+        self, style_id: str, custom_style: CustomStyle | None = None
+    ) -> None: ...
 
     def set_tempo(self, tempo_bpm: int) -> None: ...
 
@@ -248,6 +257,7 @@ class ProceduralArrangerAudio:
     ) -> None:
         first_style = next(iter(DEMO_STYLES.values()))
         self._style_id = first_style.id
+        self._custom_style: CustomStyle | None = None
         self._tempo_bpm = first_style.default_tempo_bpm
         self._chord: ChordState | None = None
         self._sink_factory = sink_factory or (
@@ -294,12 +304,21 @@ class ProceduralArrangerAudio:
 
         return "FluidSynth SoundFont" if self._soundfont_path else "procedural PCM"
 
-    def select_style(self, style_id: str) -> None:
+    def select_style(
+        self, style_id: str, custom_style: CustomStyle | None = None
+    ) -> None:
         if style_id not in DEMO_STYLES:
             raise ArrangerError(f"unknown arranger style: {style_id}")
-        self._style_id = style_id
+        if custom_style is not None and self._soundfont_path is None:
+            raise ArrangerError(
+                "custom instrument styles require a configured SoundFont"
+            )
         if self._session is not None:
-            self._session.select_style(style_id)
+            with suppress(AudioPlaybackError):
+                self._session.close()
+            self._session = None
+        self._style_id = style_id
+        self._custom_style = custom_style
 
     def set_tempo(self, tempo_bpm: int) -> None:
         self._tempo_bpm = tempo_bpm
@@ -355,6 +374,7 @@ class ProceduralArrangerAudio:
                         style_id,
                         renderer_config,
                         soundfont_path,
+                        custom_style=self._custom_style,
                     )
 
                 self._session = RealtimeDemoArranger(
@@ -388,6 +408,7 @@ class LiveArrangerService:
             raise ValueError("chord_coalesce_ns must be positive")
         first_style = next(iter(DEMO_STYLES.values()))
         self._audio = audio or ProceduralArrangerAudio()
+        self._custom_styles: dict[str, CustomStyle] = {}
         self._clock = clock
         self._style_id = first_style.id
         self._tempo_bpm = first_style.default_tempo_bpm
@@ -409,8 +430,26 @@ class LiveArrangerService:
         self._sync_stop_at_ns: int | None = None
         self._error: str | None = None
         self._output_configured = False
+        self._style_previewing = False
+        self._preview_tempo_bpm: int | None = None
+        self._preview_stop_at_ns: int | None = None
         self._audio.select_style(self._style_id)
         self._audio.set_tempo(self._tempo_bpm)
+
+    def configure_custom_styles(self, styles: Sequence[CustomStyle]) -> None:
+        """Replace the saved user-style catalog while transport is stopped."""
+
+        if self._running:
+            raise ArrangerError("stop the arranger before changing custom styles")
+        self._stop_style_preview()
+        self._custom_styles = {style.id: style for style in styles}
+        if self._style_id in DEMO_STYLES:
+            return
+        selected = self._custom_styles.get(self._style_id)
+        if selected is None:
+            self._select_style(next(iter(DEMO_STYLES)))
+            return
+        self._apply_style_selection(selected.id, selected)
 
     def configure_profile(self, profile: Mapping[str, object] | None) -> None:
         """Use only reviewed bass/chord channels from the saved profile."""
@@ -428,6 +467,7 @@ class LiveArrangerService:
 
         if self._running:
             raise ArrangerError("stop the arranger before changing audio output")
+        self._stop_style_preview()
         self._audio.configure_output(device)
         self._output_configured = device is not None
         self._error = None
@@ -436,6 +476,7 @@ class LiveArrangerService:
         """Apply one validated web control and return the resulting snapshot."""
 
         try:
+            self._stop_style_preview()
             if action == "style":
                 self._select_style(value)
             elif action == "start":
@@ -479,6 +520,8 @@ class LiveArrangerService:
 
         if event.get("type") != "midi" or event.get("direction") != "in":
             return
+        if self._style_previewing:
+            return
         channel = event.get("channel")
         note = event.get("note")
         timestamp_ns = event.get("timestamp_ns")
@@ -518,6 +561,9 @@ class LiveArrangerService:
         if isinstance(audio_error, str):
             self._error = audio_error
             self._running = False
+            self._style_previewing = False
+            self._preview_tempo_bpm = None
+            self._preview_stop_at_ns = None
         self._resolve_chord_cluster(now)
         if (
             self._running
@@ -529,6 +575,12 @@ class LiveArrangerService:
         if self._running and self._audio.section is DemoSection.STOPPED:
             self._running = False
             self._sync_stop_at_ns = None
+        if (
+            self._style_previewing
+            and self._preview_stop_at_ns is not None
+            and now >= self._preview_stop_at_ns
+        ):
+            self._stop_style_preview()
         return self.snapshot()
 
     def next_check_delay_seconds(
@@ -547,6 +599,8 @@ class LiveArrangerService:
             deadlines.append(self._chord_dirty_at_ns + self._chord_coalesce_ns)
         if self._running and self._sync_stop_at_ns is not None:
             deadlines.append(self._sync_stop_at_ns)
+        if self._style_previewing and self._preview_stop_at_ns is not None:
+            deadlines.append(self._preview_stop_at_ns)
         if not deadlines:
             return idle_seconds
         remaining_seconds = max(0, min(deadlines) - now) / 1_000_000_000
@@ -555,7 +609,8 @@ class LiveArrangerService:
     def snapshot(self) -> JsonObject:
         """Return browser-safe arranger status and the complete style catalog."""
 
-        definition = DEMO_STYLES[self._style_id]
+        definition = self._current_definition()
+        custom_style = self._custom_styles.get(self._style_id)
         section = self._audio.section.value if self._running else "stopped"
         position_ticks = self._audio.position_ticks if self._running else None
         beat_index = (
@@ -575,13 +630,33 @@ class LiveArrangerService:
                     "description": style.description,
                     "default_tempo_bpm": style.default_tempo_bpm,
                     "beats_per_bar": style.beats_per_bar,
+                    "custom": False,
                 }
                 for style in DEMO_STYLES.values()
+            ]
+            + [
+                {
+                    "id": style.id,
+                    "name": style.name,
+                    "description": (
+                        f"Custom {style.beats_per_bar}/4 · {style.phrase_bars} "
+                        f"measure phrase · {DEMO_STYLES[style.base_style_id].name}"
+                    ),
+                    "default_tempo_bpm": style.tempo_bpm,
+                    "beats_per_bar": style.beats_per_bar,
+                    "phrase_bars": style.phrase_bars,
+                    "custom": True,
+                }
+                for style in self._custom_styles.values()
             ],
             "tempo_bpm": self._tempo_bpm,
             "tempo_source": self._tempo_source,
             "tempo_mode": self._tempo_mode,
-            "beats_per_bar": definition.beats_per_bar,
+            "beats_per_bar": (
+                custom_style.beats_per_bar
+                if custom_style is not None
+                else definition.beats_per_bar
+            ),
             "ticks_per_beat": TRANSPORT_TICKS_PER_BEAT,
             "position_ticks": position_ticks,
             "beat_index": beat_index,
@@ -602,28 +677,112 @@ class LiveArrangerService:
                 self._audio, "synthesis_engine", "procedural PCM"
             ),
             "output_configured": self._output_configured,
+            "style_previewing": self._style_previewing,
+            "preview_tempo_bpm": self._preview_tempo_bpm,
+            "preview_duration_seconds": STYLE_PREVIEW_DURATION_NS // 1_000_000_000,
             "error": self._error or getattr(self._audio, "error", None),
         }
+
+    def preview_custom_style(self, style: CustomStyle, tempo_bpm: int) -> JsonObject:
+        """Render an unsaved style against C major without changing selection."""
+
+        if self._running:
+            raise ArrangerError("stop the arranger before previewing a style")
+        if not self._output_configured:
+            raise ArrangerError("select an accompaniment audio output first")
+        if not MIN_TEMPO_BPM <= tempo_bpm <= MAX_TEMPO_BPM:
+            raise ArrangerError(
+                f"preview tempo must be between {MIN_TEMPO_BPM} and {MAX_TEMPO_BPM} BPM"
+            )
+        self._stop_style_preview()
+        try:
+            self._audio.select_style(style.base_style_id, style)
+            self._audio.set_tempo(tempo_bpm)
+            self._audio.set_chord(
+                ChordState(
+                    root_pitch_class=0,
+                    quality=ChordQuality.MAJOR,
+                    bass_pitch_class=0,
+                    confidence=1.0,
+                    source_event_ids=("style-preview",),
+                    recognized_at_ns=self._clock(),
+                )
+            )
+            self._audio.start_main()
+        except Exception as error:
+            self._restore_selected_audio()
+            raise ArrangerError(str(error)) from error
+        self._style_previewing = True
+        self._preview_tempo_bpm = tempo_bpm
+        self._preview_stop_at_ns = self._clock() + STYLE_PREVIEW_DURATION_NS
+        self._error = None
+        return self.snapshot()
+
+    def stop_style_preview(self) -> JsonObject:
+        """Stop a designer preview and restore the selected live arrangement."""
+
+        self._stop_style_preview()
+        return self.snapshot()
 
     def close(self) -> None:
         """Stop accompaniment and release the audio process."""
 
         self._audio.close()
 
+    def _stop_style_preview(self) -> None:
+        if not self._style_previewing:
+            return
+        self._audio.stop()
+        self._style_previewing = False
+        self._preview_tempo_bpm = None
+        self._preview_stop_at_ns = None
+        self._restore_selected_audio()
+
+    def _restore_selected_audio(self) -> None:
+        custom_style = self._custom_styles.get(self._style_id)
+        base_style_id = (
+            custom_style.base_style_id if custom_style is not None else self._style_id
+        )
+        self._audio.select_style(base_style_id, custom_style)
+        self._audio.set_tempo(self._tempo_bpm)
+        self._audio.set_chord(self._chord)
+
     def _select_style(self, value: object | None) -> None:
-        if not isinstance(value, str) or value not in DEMO_STYLES:
+        if not isinstance(value, str):
             raise ArrangerError(f"unknown arranger style: {value}")
         if self._running:
             raise ArrangerError("stop the arranger before changing style")
-        definition = DEMO_STYLES[value]
+        custom_style = self._custom_styles.get(value)
+        if value not in DEMO_STYLES and custom_style is None:
+            raise ArrangerError(f"unknown arranger style: {value}")
+        self._apply_style_selection(value, custom_style)
+
+    def _apply_style_selection(
+        self, value: str, custom_style: CustomStyle | None
+    ) -> None:
+        base_style_id = (
+            custom_style.base_style_id if custom_style is not None else value
+        )
+        definition = DEMO_STYLES[base_style_id]
         self._style_id = value
         self._reset_auto_tempo()
         if self._tempo_mode == TEMPO_MODE_AUTO:
-            self._tempo_bpm = definition.default_tempo_bpm
+            self._tempo_bpm = (
+                custom_style.tempo_bpm
+                if custom_style is not None
+                else definition.default_tempo_bpm
+            )
             self._tempo_source = "style default"
         self._intro_armed = False
-        self._audio.select_style(value)
+        self._audio.select_style(base_style_id, custom_style)
         self._audio.set_tempo(self._tempo_bpm)
+
+    def _current_definition(self) -> DemoStyleDefinition:
+        custom_style = self._custom_styles.get(self._style_id)
+        style_id = (
+            custom_style.base_style_id if custom_style is not None else self._style_id
+        )
+        return DEMO_STYLES[style_id]
 
     def _set_tempo_mode(self, value: object | None) -> None:
         if value not in (TEMPO_MODE_AUTO, TEMPO_MODE_FIXED):
@@ -668,9 +827,13 @@ class LiveArrangerService:
         if self._tempo_mode != TEMPO_MODE_AUTO:
             return
         self._auto_tempo_sources.add(source)
+        custom_style = self._custom_styles.get(self._style_id)
         tempo = self._rhythm_tracker.observe(
             timestamp_ns,
-            beat_spans=style_rhythm_spans(self._style_id),
+            beat_spans=style_rhythm_spans(
+                self._current_definition().id,
+                custom_style.phrase_bars if custom_style is not None else None,
+            ),
             reference_bpm=self._tempo_bpm,
         )
         if tempo is not None or self._tempo_source.startswith("left hand ·"):
@@ -745,7 +908,7 @@ class LiveArrangerService:
         self._arm_sync_stop(timestamp_ns)
 
     def _arm_sync_stop(self, timestamp_ns: int) -> None:
-        style = DEMO_STYLES[self._style_id]
+        style = self._current_definition()
         duration_ns = round(
             SYNC_STOP_BARS * style.beats_per_bar * 60_000_000_000 / self._tempo_bpm
         )

@@ -17,7 +17,7 @@ measurements in the deployed container found:
 These measurements used isolated notes rendered by a separate FluidSynth
 instance. They did not exercise the FR-4X or Bluetooth audio path.
 
-## Change
+## Change at W20
 
 - Modern Tango and Classic Tango now use GM Muted Trumpet (program 59), measured
   within four cents through note 96. Extreme generated voicings are folded down
@@ -26,6 +26,12 @@ instance. They did not exercise the FR-4X or Bluetooth audio path.
   range measured without a material pitch deviation.
 - Other style instruments were retained because their measured ranges did not
   reproduce the accordion-preset defect.
+
+W22 subsequently replaced all built-in lead and backing palettes with the
+curated piano, acoustic-guitar, flute, and drum ensemble. The original W20
+measurements remain the reason accordion and brass presets are not exposed by
+the style designer; current palette evidence is recorded in
+`w22-editable-style-designer.md`.
 
 ## Verification
 

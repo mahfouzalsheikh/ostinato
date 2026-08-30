@@ -92,9 +92,14 @@ different file. TimGM6mb is distributed under GPL-2 according to the package
 copyright metadata.
 
 When this configured file is present, the six arrangements use native
-FluidSynth voices for bass, piano or guitar, accordion or reed, strings, and
-General MIDI drums. Without the variable, the deterministic procedural PCM
-renderer remains available for development and hardware-free tests.
+FluidSynth voices from the curated acoustic-piano, acoustic-guitar, flute, and
+General MIDI drum palette. The web style designer saves editable template,
+meter, phrase length, instrument, register, articulation, tempo, drum, and mix
+choices in the existing persistent state volume. Its optional catalog also
+includes electric and acoustic basses, additional guitars and keys, strings,
+harp, and winds. Custom instrument styles require this configured SoundFont. Without
+the variable, the deterministic procedural PCM renderer remains available for
+development and hardware-free tests of the built-in styles.
 
 ## USB and device-access boundary
 

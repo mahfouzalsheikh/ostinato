@@ -14,6 +14,7 @@ from ostinato.soundfont_audio import (
     PALETTES,
     SoundFontArrangementRenderer,
 )
+from ostinato.style_designer import CustomStyle, default_custom_style_payload
 
 
 class FakeSynthEngine:
@@ -60,6 +61,7 @@ class SoundFontArrangementRendererTests(unittest.TestCase):
         *,
         tempo_bpm: int = 120,
         sample_rate: int = 1_000,
+        custom_style: CustomStyle | None = None,
     ) -> tuple[SoundFontArrangementRenderer, FakeSynthEngine]:
         engine = FakeSynthEngine()
         renderer = SoundFontArrangementRenderer(
@@ -70,6 +72,7 @@ class SoundFontArrangementRendererTests(unittest.TestCase):
                 chunk_frames=10,
             ),
             "/configured/test.sf2",
+            custom_style=custom_style,
             engine_factory=lambda _config, _path: engine,
         )
         return renderer, engine
@@ -78,31 +81,71 @@ class SoundFontArrangementRendererTests(unittest.TestCase):
         _, engine = self.create_renderer("bossa_nova")
 
         self.assertEqual(len(engine.programs), 5)
-        self.assertIn((1, 0, 24), engine.programs)
+        self.assertIn((1, 0, 25), engine.programs)
         self.assertIn((DRUM_CHANNEL, 128, 0), engine.programs)
         self.assertEqual(engine.gains, [1.9])
 
-    def test_palettes_avoid_the_out_of_tune_accordion_sample_zones(self) -> None:
-        for style_id in ("modern_tango", "classic_tango"):
+    def test_built_in_palettes_use_piano_guitar_flute_and_no_strings(self) -> None:
+        for style_id, palette in PALETTES.items():
             with self.subTest(style=style_id):
-                palette = PALETTES[style_id]
-                self.assertEqual(palette.reed_program, 59)
-                self.assertEqual(palette.reed_high_note, 96)
+                self.assertEqual(palette.bass_program, 25)
+                self.assertIn(palette.comp_program, (0, 25))
+                self.assertEqual(palette.reed_program, 73)
+                self.assertEqual(palette.pad_program, 25)
+                self.assertNotIn(
+                    48,
+                    (
+                        palette.bass_program,
+                        palette.comp_program,
+                        palette.reed_program,
+                        palette.pad_program,
+                    ),
+                )
 
-        self.assertEqual(PALETTES["classic_waltz"].reed_program, 69)
-
-    def test_tango_brass_voicings_stay_inside_the_verified_sample_range(self) -> None:
+    def test_custom_palette_and_muted_layers_are_applied(self) -> None:
+        value = default_custom_style_payload()
+        value["id"] = "custom-123456abcdef"
+        value["comp"] = {"instrument": "acoustic_guitar", "volume": 75}
+        value["backing"] = {"instrument": "none", "volume": 0}
+        value["drums_enabled"] = False
+        style = CustomStyle.from_mapping(value)
         renderer, engine = self.create_renderer(
-            "modern_tango", tempo_bpm=60, sample_rate=100
+            tempo_bpm=60, sample_rate=100, custom_style=style
         )
 
-        renderer.render(1_600, chord(11, ChordQuality.DOMINANT_SEVENTH))
+        renderer.render(400, chord())
 
-        brass_notes = [
-            note for channel, note, _velocity in engine.note_ons if channel == 2
+        channels = {channel for channel, _note, _velocity in engine.note_ons}
+        self.assertIn((1, 0, 25), engine.programs)
+        self.assertNotIn(3, channels)
+        self.assertNotIn(DRUM_CHANNEL, channels)
+
+    def test_custom_instrument_register_and_phrase_length_are_applied(self) -> None:
+        value = default_custom_style_payload()
+        value["id"] = "custom-123456abcdef"
+        value["phrase_bars"] = 1
+        value["comp"] = {
+            "instrument": "mandolin",
+            "volume": 75,
+            "octave": 1,
+            "gate_percent": 55,
+        }
+        style = CustomStyle.from_mapping(value)
+        renderer, engine = self.create_renderer(
+            tempo_bpm=60, sample_rate=100, custom_style=style
+        )
+
+        renderer.render(800, chord())
+
+        comp_notes = [
+            note for channel, note, _velocity in engine.note_ons if channel == 1
         ]
-        self.assertTrue(brass_notes)
-        self.assertLessEqual(max(brass_notes), 96)
+        bass_notes = [
+            note for channel, note, _velocity in engine.note_ons if channel == 0
+        ]
+        self.assertIn((1, 0, 25), engine.programs)
+        self.assertGreaterEqual(min(comp_notes), 84)
+        self.assertEqual(bass_notes[:3], bass_notes[3:6])
 
     def test_first_bar_uses_sampled_bass_harmony_and_drums(self) -> None:
         renderer, engine = self.create_renderer()

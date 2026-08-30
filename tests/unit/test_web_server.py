@@ -4,9 +4,11 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import create_autospec
 
 from fastapi.testclient import TestClient
 
+from ostinato.arranger import LiveArrangerService
 from ostinato.audio_output import (
     AudioOutputDevice,
     AudioOutputService,
@@ -14,6 +16,7 @@ from ostinato.audio_output import (
 )
 from ostinato.midi_profile import MidiProfileStore
 from ostinato.realtime_midi import MidiService
+from ostinato.style_designer import CustomStyleStore, default_custom_style_payload
 from ostinato.web_server import create_app
 from tests.fake_midi import FakeMidiBackend
 
@@ -40,11 +43,15 @@ class WebServerTests(unittest.TestCase):
             ],
             test=self.tested_audio_outputs.append,
         )
+        self.custom_style_store = CustomStyleStore(
+            Path(self.temporary.name) / "custom-styles.json"
+        )
         self.client_context = TestClient(
             create_app(
                 self.service,
                 self.profile_store,
                 audio_output_service=self.audio_output_service,
+                custom_style_store=self.custom_style_store,
             )
         )
         self.client = self.client_context.__enter__()
@@ -88,7 +95,23 @@ class WebServerTests(unittest.TestCase):
         self.assertIn('id="audio-output-dialog"', index.text)
         self.assertIn('id="audio-output-select"', index.text)
         self.assertIn('id="test-audio-output"', index.text)
+        self.assertIn('id="open-style-designer"', index.text)
+        self.assertIn('id="style-designer-dialog"', index.text)
+        self.assertIn('id="designer-meter"', index.text)
+        self.assertIn('id="designer-phrase-bars"', index.text)
+        self.assertIn('id="designer-template"', index.text)
+        self.assertIn('id="designer-save"', index.text)
+        self.assertIn("Keys · guitars · basses · strings · winds", index.text)
+        self.assertIn('data-field="octave"', index.text)
+        self.assertIn('data-field="gate"', index.text)
+        self.assertIn('id="designer-preview-tempo"', index.text)
+        self.assertIn('id="designer-preview-play"', index.text)
+        self.assertIn('id="designer-preview-stop"', index.text)
         self.assertNotIn("Configure the sound module", index.text)
+        app_script = self.client.get("/assets/app.js")
+        self.assertEqual(app_script.status_code, 200)
+        self.assertIn("scheduleDesignerPreviewRestart", app_script.text)
+        self.assertNotIn("Press Restart to hear the update", app_script.text)
 
     def test_arranger_catalog_and_safe_stopped_controls_are_available(self) -> None:
         initial = self.client.get("/api/arranger/status")
@@ -139,6 +162,82 @@ class WebServerTests(unittest.TestCase):
         self.assertEqual(fixed.json()["tempo_mode"], "fixed")
         self.assertEqual(invalid.status_code, 409)
         self.assertEqual(automatic.json()["tempo_mode"], "bass_auto")
+
+    def test_custom_styles_can_be_created_edited_and_deleted(self) -> None:
+        catalog = self.client.get("/api/styles")
+        created = self.client.post(
+            "/api/styles", json=default_custom_style_payload("classic_waltz")
+        )
+        style = created.json()
+        edited_payload = default_custom_style_payload("classic_waltz")
+        edited_payload["name"] = "Edited waltz"
+        edited = self.client.put(f"/api/styles/{style['id']}", json=edited_payload)
+        after_edit = self.client.get("/api/styles")
+        deleted = self.client.delete(f"/api/styles/{style['id']}")
+
+        self.assertEqual(catalog.status_code, 200)
+        instrument_ids = {
+            instrument["id"] for instrument in catalog.json()["instruments"]
+        }
+        self.assertTrue(
+            {
+                "none",
+                "piano",
+                "acoustic_guitar",
+                "mandolin",
+                "double_bass",
+                "fingered_bass",
+                "contrabass",
+                "string_ensemble",
+                "flute",
+            }.issubset(instrument_ids)
+        )
+        self.assertEqual(catalog.json()["meters"], [2, 3, 4])
+        self.assertEqual(catalog.json()["defaults"]["schema_version"], 2)
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(edited.json()["name"], "Edited waltz")
+        self.assertEqual(len(after_edit.json()["styles"]), 1)
+        self.assertEqual(deleted.status_code, 204)
+        self.assertEqual(self.client.get("/api/styles").json()["styles"], [])
+
+    def test_unsaved_style_preview_and_stop_reach_the_arranger(self) -> None:
+        arranger = create_autospec(LiveArrangerService, instance=True)
+        arranger.next_check_delay_seconds.return_value = 0.05
+        arranger.advance.return_value = {"running": False}
+        arranger.preview_custom_style.return_value = {
+            "style_previewing": True,
+            "preview_tempo_bpm": 146,
+        }
+        arranger.stop_style_preview.return_value = {
+            "style_previewing": False,
+            "preview_tempo_bpm": None,
+        }
+        service = MidiService(FakeMidiBackend(), poll_interval_seconds=0.01)
+        app = create_app(
+            service,
+            MidiProfileStore(Path(self.temporary.name) / "preview-profile.json"),
+            arranger_service=arranger,
+            audio_output_service=self.audio_output_service,
+            custom_style_store=self.custom_style_store,
+        )
+
+        with TestClient(app) as client:
+            started = client.post(
+                "/api/styles/preview",
+                json={
+                    "style": default_custom_style_payload("classic_waltz"),
+                    "tempo_bpm": 146,
+                },
+            )
+            stopped = client.delete("/api/styles/preview")
+
+        self.assertEqual(started.status_code, 200)
+        self.assertIs(started.json()["style_previewing"], True)
+        self.assertEqual(stopped.status_code, 200)
+        preview_style, preview_tempo = arranger.preview_custom_style.call_args.args
+        self.assertEqual(preview_style.base_style_id, "classic_waltz")
+        self.assertEqual(preview_tempo, 146)
+        arranger.stop_style_preview.assert_called_once_with()
 
     def test_audio_output_is_discovered_tested_and_saved_by_exact_id(self) -> None:
         available = self.client.get("/api/audio/outputs")

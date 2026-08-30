@@ -29,9 +29,11 @@ from ostinato.computer_audio import (
 )
 from ostinato.domain import ChordQuality, ChordState
 from ostinato.keyboard_input import MAX_TEMPO_BPM, MIN_TEMPO_BPM
+from ostinato.style_designer import INSTRUMENTS, CustomStyle
 
 MELODIC_CHANNELS = (0, 1, 2, 3)
 DRUM_CHANNEL = 9
+CHANNEL_LAYERS = {0: "bass", 1: "comp", 2: "fill", 3: "backing"}
 KICK_NOTE = 36
 SIDE_STICK_NOTE = 37
 SNARE_NOTE = 38
@@ -263,24 +265,16 @@ class SoundFontPalette:
 
 
 PALETTES: dict[str, SoundFontPalette] = {
-    # TimGM6mb programs 21 and 23 use sharply flat sample zones above C5.
-    # Muted trumpet is stable through C7 and suits tango accents; fold only
-    # its extreme generated voicings back into that measured range. English
-    # horn supplies the waltz's sustained color without the faulty zones.
-    "modern_tango": SoundFontPalette(
-        32, 0, 59, 48, CLAVES_NOTE, gain=1.25, reed_high_note=96
-    ),
-    "classic_tango": SoundFontPalette(
-        32, 0, 59, 48, CLAVES_NOTE, gain=1.25, reed_high_note=96
-    ),
-    "classic_waltz": SoundFontPalette(32, 0, 69, 48, RIDE_CYMBAL_NOTE, gain=1.05),
+    "modern_tango": SoundFontPalette(25, 0, 73, 25, CLAVES_NOTE, gain=1.25),
+    "classic_tango": SoundFontPalette(25, 0, 73, 25, CLAVES_NOTE, gain=1.25),
+    "classic_waltz": SoundFontPalette(25, 0, 73, 25, RIDE_CYMBAL_NOTE, gain=1.05),
     "bossa_nova": SoundFontPalette(
-        33, 24, 11, 48, MARACAS_NOTE, SIDE_STICK_NOTE, CLOSED_HIHAT_NOTE, 1.9
+        25, 25, 73, 25, MARACAS_NOTE, SIDE_STICK_NOTE, CLOSED_HIHAT_NOTE, 1.9
     ),
     "swing_foxtrot": SoundFontPalette(
-        32, 0, 65, 48, SIDE_STICK_NOTE, SNARE_NOTE, RIDE_CYMBAL_NOTE, 1.85
+        25, 0, 73, 25, SIDE_STICK_NOTE, SNARE_NOTE, RIDE_CYMBAL_NOTE, 1.85
     ),
-    "alpine_polka": SoundFontPalette(32, 21, 56, 48, TAMBOURINE_NOTE, gain=1.8),
+    "alpine_polka": SoundFontPalette(25, 0, 73, 25, TAMBOURINE_NOTE, gain=1.8),
 }
 
 
@@ -310,6 +304,7 @@ class SoundFontArrangementRenderer:
         config: DemoAudioConfig,
         soundfont_path: str,
         *,
+        custom_style: CustomStyle | None = None,
         engine_factory: Callable[
             [DemoAudioConfig, str], SynthEngine
         ] = FluidSynthEngine,
@@ -334,7 +329,9 @@ class SoundFontArrangementRenderer:
         self._chord_signature: tuple[int, ChordQuality, int | None] | None = None
         self._silent = True
         self._closed = False
-        self._configure_palette(PALETTES[style_id])
+        self._custom_style = custom_style
+        self._palette = self._palette_for(PALETTES[style_id], custom_style)
+        self._configure_palette(self._palette)
 
     @property
     def tempo_bpm(self) -> int:
@@ -465,12 +462,17 @@ class SoundFontArrangementRenderer:
             / beats_per_bar
         )
         for bar_index in range(first_bar, last_bar + 1):
-            groove = self._renderer_type._GROOVE[
-                bar_index % len(self._renderer_type._GROOVE)
-            ]
+            phrase_bars = (
+                self._custom_style.phrase_bars
+                if section is DemoSection.MAIN and self._custom_style is not None
+                else len(self._renderer_type._GROOVE)
+            )
+            groove = self._renderer_type._GROOVE[bar_index % phrase_bars]
             bar_section_beat = bar_index * beats_per_bar
             bar_absolute_beat = self._section_start_beat + bar_section_beat
-            levels = self._renderer_type._ensemble_levels(section, bar_section_beat)
+            levels = self._customize_levels(
+                self._renderer_type._ensemble_levels(section, bar_section_beat)
+            )
             phrase_dynamic = self._renderer_type._PHRASE_DYNAMICS[
                 bar_index % len(self._renderer_type._PHRASE_DYNAMICS)
             ]
@@ -501,7 +503,7 @@ class SoundFontArrangementRenderer:
         dynamic: float,
         final_bar: bool,
     ) -> None:
-        palette = PALETTES[self._definition.id]
+        palette = self._palette
         for pulse, (onset, interval) in enumerate(
             zip(groove.bass_onsets, groove.bass_intervals, strict=True)
         ):
@@ -674,6 +676,8 @@ class SoundFontArrangementRenderer:
     ) -> None:
         if velocity <= 0 or not start_beat <= beat < end_beat:
             return
+        note = self._custom_note(channel, note)
+        duration_beats *= self._custom_gate_scale(channel)
         frame = self._frame_at_beat(beat)
         duration_frames = max(
             1,
@@ -726,7 +730,7 @@ class SoundFontArrangementRenderer:
     def _change_harmony(self, chord: ChordState, frame: int) -> None:
         for channel in MELODIC_CHANNELS:
             # CC123 releases notes through the preset's envelope.  That is too
-            # slow for live harmony changes: TimGM6mb's string preset can keep
+            # slow for live harmony changes: sustained presets can keep
             # the previous chord clearly audible for more than a second.  Cut
             # the stale voices first, then clear the channel's note state.
             self._engine.control_change(channel, 120, 0)
@@ -736,27 +740,36 @@ class SoundFontArrangementRenderer:
         ]
         heapq.heapify(self._events)
         intervals = self._INTERVALS[chord.quality]
-        immediate_voices = [(1, MIDDLE_C_NOTE, 52, 0.22)]
-        if any(groove.pad_onsets != () for groove in self._renderer_type._GROOVE):
+        immediate_voices: list[tuple[int, int, int, float]] = []
+        comp_velocity = round(52 * self._layer_scale("comp"))
+        if comp_velocity > 0:
+            immediate_voices.append((1, MIDDLE_C_NOTE, comp_velocity, 0.22))
+        backing_velocity = round(42 * self._layer_scale("backing"))
+        if backing_velocity > 0 and any(
+            groove.pad_onsets != () for groove in self._renderer_type._GROOVE
+        ):
             pad_duration = self._renderer_type._PAD_DURATION_BEATS
             immediate_voices.append(
                 (
                     3,
                     LOW_C_NOTE,
-                    42,
+                    backing_velocity,
                     pad_duration
                     if pad_duration is not None
                     else self._renderer_type.BEATS_PER_BAR,
                 )
             )
         for channel, base, velocity, duration in immediate_voices:
+            duration *= self._custom_gate_scale(channel)
             for interval in intervals:
                 self._event_order += 1
                 event = _SynthEvent(
                     frame,
                     self._event_order,
                     channel,
-                    base + chord.root_pitch_class + interval,
+                    self._custom_note(
+                        channel, base + chord.root_pitch_class + interval
+                    ),
                     velocity,
                     max(
                         1,
@@ -788,6 +801,70 @@ class SoundFontArrangementRenderer:
         ):
             self._engine.control_change(channel, 10, pan)
             self._engine.control_change(channel, 7, volume)
+
+    @staticmethod
+    def _palette_for(
+        base: SoundFontPalette, custom_style: CustomStyle | None
+    ) -> SoundFontPalette:
+        if custom_style is None:
+            return base
+
+        def program(layer_name: str, fallback: int) -> int:
+            selected = INSTRUMENTS[custom_style.layer(layer_name).instrument].program
+            return fallback if selected is None else selected
+
+        return SoundFontPalette(
+            bass_program=program("bass", base.bass_program),
+            comp_program=program("comp", base.comp_program),
+            reed_program=program("fill", base.reed_program),
+            pad_program=program("backing", base.pad_program),
+            auxiliary_note=base.auxiliary_note,
+            snare_note=base.snare_note,
+            timekeeper_note=base.timekeeper_note,
+            gain=base.gain,
+        )
+
+    def _customize_levels(self, levels: EnsembleLevels) -> EnsembleLevels:
+        style = self._custom_style
+        if style is None:
+            return levels
+
+        drum_scale = style.drums_volume / 100 if style.drums_enabled else 0.0
+        return EnsembleLevels(
+            bass=levels.bass * self._layer_scale("bass"),
+            piano=levels.piano * self._layer_scale("comp"),
+            bandoneon=levels.bandoneon * self._layer_scale("fill"),
+            drums=levels.drums * drum_scale,
+            percussion=levels.percussion * drum_scale,
+            strings=levels.strings * self._layer_scale("backing"),
+        )
+
+    def _layer_scale(self, layer_name: str) -> float:
+        style = self._custom_style
+        if style is None:
+            return 1.0
+        layer = style.layer(layer_name)
+        if layer.instrument == "none":
+            return 0.0
+        return layer.volume / 100
+
+    def _custom_note(self, channel: int, note: int) -> int:
+        layer_name = CHANNEL_LAYERS.get(channel)
+        if self._custom_style is None or layer_name is None:
+            return max(0, min(127, note))
+        layer = self._custom_style.layer(layer_name)
+        instrument = INSTRUMENTS[layer.instrument]
+        return max(
+            0,
+            min(127, note + instrument.note_offset + (layer.octave * 12)),
+        )
+
+    def _custom_gate_scale(self, channel: int) -> float:
+        layer_name = CHANNEL_LAYERS.get(channel)
+        if self._custom_style is None or layer_name is None:
+            return 1.0
+        layer = self._custom_style.layer(layer_name)
+        return INSTRUMENTS[layer.instrument].gate_scale * layer.gate_percent / 100
 
     def _all_sound_off(self) -> None:
         for channel in (*MELODIC_CHANNELS, DRUM_CHANNEL):

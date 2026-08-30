@@ -68,11 +68,11 @@ MIDI wizard remains only for pressing notes on the browser simulator.
 Six original arrangements are available:
 
 - **Modern Tango** — 4/4 at 120 BPM, with a dramatic 3+3+2 foundation,
-  changing bass movement, syncopated piano/reed voicings, strings, and a
+  changing bass movement, syncopated piano/flute voicings, acoustic guitar, and a
   fourth-bar percussion fill;
 - **Classic Tango** — 4/4 at 120 BPM, alternating traditional marcato in four,
-  marcato in two, and sincopa gestures across acoustic bass, piano, bandoneon,
-  and short string attacks without a generic drum kit;
+  marcato in two, and sincopa gestures across acoustic guitar, piano,
+  flute, and short acoustic-guitar attacks without a generic drum kit;
 - **Classic Waltz** — 3/4 at 96 BPM, with true bass-on-one and chordal
   oom-pah-pah responses, rising inversions, orchestral dynamics, and a turn
   into the fourth bar;
@@ -82,7 +82,43 @@ Six original arrangements are available:
 - **Swing Foxtrot** — 4/4 at 132 BPM, with four-beat walking bass lines,
   offbeat chord stabs, a swung ride-like pulse, and a compact turnaround;
 - **Alpine Polka** — 2/4 at 124 BPM, with alternating root/fifth bass,
-  offbeat chords, bright reed voicing, and a lively fourth-bar fill.
+  offbeat chords, bright flute voicing, and a lively fourth-bar fill.
+
+Choose **Style designer** while playback is stopped to make an editable style.
+Select a 2/4, 3/4, or 4/4 measure first; the designer then offers only rhythmic
+templates written for that meter instead of squeezing an incompatible pattern
+into it. A main phrase can loop its first one through four measures. Intros and
+endings retain the template's deliberately arranged four-measure form.
+
+Each of the bass line, chord rhythm, melodic-fill, and backing roles has its own
+instrument, level, octave register, and note-length control. The expanded
+General MIDI palette includes multiple pianos, acoustic and electric guitars,
+fingered/picked/fretless bass guitar, double bass and orchestral contrabass,
+solo and ensemble strings, pizzicato/tremolo strings, harp, and woodwinds.
+General MIDI has no dedicated mandolin program, so **Mandolin-style pluck** is
+explicitly implemented with the steel acoustic-guitar sample, one octave up
+and shortened. The six built-in styles remain string-free by default; strings
+are now an intentional custom choice.
+
+Saved styles appear in the main selector with a **Custom** label and can be
+reopened, updated, or deleted. They are stored atomically in
+`custom-styles.json` under `OSTINATO_STATE_DIRECTORY` and require the configured
+SoundFont renderer. Schema-v1 custom styles load with neutral register and
+note-length defaults and are written as schema v2 on their next save.
+
+The designer's **Preview** strip auditions the complete unsaved form through
+the already selected accompaniment audio output. It uses a fixed C-major
+harmony so instrument, rhythm, balance, register and articulation comparisons
+are repeatable. Preview speed is independent of the saved starting tempo and
+can be changed from 40 through 240 BPM; moving it while preview is active
+restarts the same form at the new speed. Sound-affecting edits made during
+playback automatically restart the audition with a short debounce, so instrument
+and range controls can be adjusted without a burst of audio-engine restarts.
+Choosing another saved style or a new draft also keeps an active audition going.
+**Stop**, closing the modal, saving, deleting, or a normal arranger command
+restores the previously selected style, live tempo and harmony. A backend
+30-second limit also stops orphaned previews after a browser reload or lost
+connection.
 
 The bar-position strip follows the backend audio transport. It renders one
 numbered light per quarter-note beat in the selected style (two for 2/4, three
@@ -112,7 +148,7 @@ The controls and computer-key equivalents are:
 | Ending | `E` | Arm the ending for the next bar |
 | Left-hand sync | `S` | Toggle automatic start and inactivity stop |
 
-Keyboard shortcuts are ignored while a form control or either setup dialog has
+Keyboard shortcuts are ignored while a form control or any setup dialog has
 focus.
 
 In **Left-hand auto** mode, the service fuses note-on attacks from both saved

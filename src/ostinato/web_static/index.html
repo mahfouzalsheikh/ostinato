@@ -6,8 +6,8 @@
     <meta name="theme-color" content="#080b0d" />
     <title>Ostinato Live Surface</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23080b0d'/%3E%3Ctext x='32' y='44' fill='%2365f6d1' font-size='40' text-anchor='middle'%3EO%3C/text%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="/assets/styles.css?v=13" />
-    <script type="module" src="/assets/app.js?v=16"></script>
+    <link rel="stylesheet" href="/assets/styles.css?v=17" />
+    <script type="module" src="/assets/app.js?v=20"></script>
   </head>
   <body>
     <header class="topbar">
@@ -84,6 +84,9 @@
               <i id="arranger-led"></i>
               <span id="arranger-section">Stopped</span>
             </div>
+            <button id="open-style-designer" class="secondary-button" type="button">
+              Style designer
+            </button>
             <button id="open-audio-output" class="secondary-button" type="button">
               Audio output
             </button>
@@ -309,6 +312,146 @@
             <button id="save-audio-output" class="primary-button" type="button">Save output</button>
           </footer>
         </section>
+      </form>
+    </dialog>
+
+    <dialog id="style-designer-dialog" class="wizard-dialog style-designer-dialog" aria-labelledby="style-designer-title">
+      <form id="style-designer-form" class="wizard-shell">
+        <header class="wizard-header">
+          <div>
+            <p class="eyebrow">Your accompaniment palette</p>
+            <h2 id="style-designer-title">Style designer</h2>
+          </div>
+          <button class="icon-button" type="button" data-close-style-designer aria-label="Close style designer">×</button>
+        </header>
+
+        <p class="wizard-intro style-designer-intro">
+          Choose the measure and phrase shape first, then build the ensemble,
+          registers, articulation, and mix. Built-in templates stay unchanged.
+        </p>
+
+        <div class="style-designer-basics">
+          <label>
+            <span>Edit saved style</span>
+            <select id="designer-style-select">
+              <option value="">Create a new style</option>
+            </select>
+          </label>
+          <label>
+            <span>Style name</span>
+            <input id="designer-name" type="text" maxlength="80" required autocomplete="off" />
+          </label>
+          <label>
+            <span>Measure</span>
+            <select id="designer-meter" required></select>
+          </label>
+          <label>
+            <span>Measures in phrase</span>
+            <select id="designer-phrase-bars" required>
+              <option value="1">1 measure</option>
+              <option value="2">2 measures</option>
+              <option value="3">3 measures</option>
+              <option value="4">4 measures</option>
+            </select>
+          </label>
+          <label>
+            <span>Groove template</span>
+            <select id="designer-template" required></select>
+          </label>
+          <label class="designer-tempo">
+            <span>Starting tempo</span>
+            <input id="designer-tempo" type="range" min="40" max="240" step="1" />
+            <strong><output id="designer-tempo-value">120</output> BPM</strong>
+          </label>
+        </div>
+
+        <section class="designer-section" aria-labelledby="designer-ensemble-title">
+          <div class="designer-section-heading">
+            <div>
+              <p class="eyebrow">Four musical roles</p>
+              <h3 id="designer-ensemble-title">Ensemble</h3>
+            </div>
+            <span>Keys · guitars · basses · strings · winds</span>
+          </div>
+          <div class="designer-layer-grid">
+            <article class="designer-layer" data-layer="bass">
+              <h4>Bass line</h4>
+              <p>Low rhythmic foundation</p>
+              <label><span>Instrument</span><select data-field="instrument"></select></label>
+              <label><span>Level <output data-field="volume-output">82</output>%</span><input data-field="volume" type="range" min="0" max="100" step="1" /></label>
+              <div class="designer-layer-advanced">
+                <label><span>Register</span><select data-field="octave"><option value="-2">−2 oct</option><option value="-1">−1 oct</option><option value="0">Normal</option><option value="1">+1 oct</option><option value="2">+2 oct</option></select></label>
+                <label><span>Note length <output data-field="gate-output">85</output>%</span><input data-field="gate" type="range" min="20" max="150" step="5" /></label>
+              </div>
+            </article>
+            <article class="designer-layer" data-layer="comp">
+              <h4>Chord rhythm</h4>
+              <p>Main harmonic pulse</p>
+              <label><span>Instrument</span><select data-field="instrument"></select></label>
+              <label><span>Level <output data-field="volume-output">88</output>%</span><input data-field="volume" type="range" min="0" max="100" step="1" /></label>
+              <div class="designer-layer-advanced">
+                <label><span>Register</span><select data-field="octave"><option value="-2">−2 oct</option><option value="-1">−1 oct</option><option value="0">Normal</option><option value="1">+1 oct</option><option value="2">+2 oct</option></select></label>
+                <label><span>Note length <output data-field="gate-output">90</output>%</span><input data-field="gate" type="range" min="20" max="150" step="5" /></label>
+              </div>
+            </article>
+            <article class="designer-layer" data-layer="fill">
+              <h4>Melodic fills</h4>
+              <p>Short phrases between chords</p>
+              <label><span>Instrument</span><select data-field="instrument"></select></label>
+              <label><span>Level <output data-field="volume-output">58</output>%</span><input data-field="volume" type="range" min="0" max="100" step="1" /></label>
+              <div class="designer-layer-advanced">
+                <label><span>Register</span><select data-field="octave"><option value="-2">−2 oct</option><option value="-1">−1 oct</option><option value="0">Normal</option><option value="1">+1 oct</option><option value="2">+2 oct</option></select></label>
+                <label><span>Note length <output data-field="gate-output">100</output>%</span><input data-field="gate" type="range" min="20" max="150" step="5" /></label>
+              </div>
+            </article>
+            <article class="designer-layer" data-layer="backing">
+              <h4>Backing pulse</h4>
+              <p>Secondary pulse or sustained texture</p>
+              <label><span>Instrument</span><select data-field="instrument"></select></label>
+              <label><span>Level <output data-field="volume-output">48</output>%</span><input data-field="volume" type="range" min="0" max="100" step="1" /></label>
+              <div class="designer-layer-advanced">
+                <label><span>Register</span><select data-field="octave"><option value="-2">−2 oct</option><option value="-1">−1 oct</option><option value="0">Normal</option><option value="1">+1 oct</option><option value="2">+2 oct</option></select></label>
+                <label><span>Note length <output data-field="gate-output">75</output>%</span><input data-field="gate" type="range" min="20" max="150" step="5" /></label>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="designer-drums">
+          <label class="designer-toggle">
+            <input id="designer-drums-enabled" type="checkbox" />
+            <span><strong>Drum kit</strong><small>Use the template's full percussion pattern</small></span>
+          </label>
+          <label>
+            <span>Drum level <output id="designer-drums-volume-value">76</output>%</span>
+            <input id="designer-drums-volume" type="range" min="0" max="100" step="1" />
+          </label>
+        </section>
+
+        <section class="designer-preview" aria-labelledby="designer-preview-title">
+          <div class="designer-preview-copy">
+            <span class="designer-preview-state"><i></i><strong id="designer-preview-title">Style preview</strong></span>
+            <small>Hear a 30-second unsaved C-major audition through the selected audio output.</small>
+          </div>
+          <label class="designer-preview-tempo">
+            <span>Preview speed</span>
+            <input id="designer-preview-tempo" type="range" min="40" max="240" step="1" value="120" />
+            <strong><output id="designer-preview-tempo-value">120</output> BPM</strong>
+          </label>
+          <div class="designer-preview-actions">
+            <button id="designer-preview-stop" class="secondary-button" type="button" disabled>Stop</button>
+            <button id="designer-preview-play" class="primary-button" type="button" aria-pressed="false">Preview</button>
+          </div>
+        </section>
+
+        <p id="style-designer-message" class="inline-message" aria-live="polite">
+          Choose a template and shape your ensemble.
+        </p>
+        <footer class="wizard-actions style-designer-actions">
+          <button id="designer-delete" class="danger-button" type="button" hidden>Delete style</button>
+          <button id="designer-new" class="secondary-button" type="button">New style</button>
+          <button id="designer-save" class="primary-button" type="submit">Save new style</button>
+        </footer>
       </form>
     </dialog>
   </body>

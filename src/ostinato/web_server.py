@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, StrictInt, model_validator
 
 from ostinato.arranger import ArrangerError, LiveArrangerService
 from ostinato.audio_output import AudioOutputError, AudioOutputService
+from ostinato.computer_audio import DEMO_STYLES
 from ostinato.midi_detection import (
     MIDI_ROLES,
     MidiDetectionError,
@@ -24,6 +25,13 @@ from ostinato.midi_detection import (
 )
 from ostinato.midi_profile import MidiProfileStore, MidiProfileStoreError
 from ostinato.realtime_midi import MidiService, MidiServiceError
+from ostinato.style_designer import (
+    INSTRUMENTS,
+    CustomStyle,
+    CustomStyleError,
+    CustomStyleStore,
+    default_custom_style_payload,
+)
 
 STATIC_DIRECTORY = Path(__file__).with_name("web_static")
 MidiNote = Annotated[int, Field(ge=0, le=127)]
@@ -143,17 +151,59 @@ class AudioOutputSelection(BaseModel):
     device: str = Field(min_length=1, max_length=512)
 
 
+class StyleLayerPayload(BaseModel):
+    """One selectable instrument role in a custom arrangement."""
+
+    instrument: str = Field(min_length=1, max_length=64)
+    volume: int = Field(ge=0, le=100)
+    octave: int = Field(default=0, ge=-2, le=2)
+    gate_percent: int = Field(default=100, ge=20, le=150)
+
+
+class CustomStylePayload(BaseModel):
+    """A user-named palette and mix over one built-in rhythmic template."""
+
+    schema_version: Literal[1, 2] = 2
+    name: str = Field(min_length=1, max_length=80)
+    base_style_id: Literal[
+        "modern_tango",
+        "classic_tango",
+        "classic_waltz",
+        "bossa_nova",
+        "swing_foxtrot",
+        "alpine_polka",
+    ]
+    beats_per_bar: int | None = Field(default=None, ge=2, le=4)
+    phrase_bars: int = Field(default=4, ge=1, le=4)
+    tempo_bpm: int = Field(ge=40, le=240)
+    bass: StyleLayerPayload
+    comp: StyleLayerPayload
+    fill: StyleLayerPayload
+    backing: StyleLayerPayload
+    drums_enabled: bool
+    drums_volume: int = Field(ge=0, le=100)
+
+
+class StylePreviewPayload(BaseModel):
+    """One unsaved designer configuration and independent audition tempo."""
+
+    style: CustomStylePayload
+    tempo_bpm: int = Field(ge=40, le=240)
+
+
 def create_app(
     service: MidiService | None = None,
     profile_store: MidiProfileStore | None = None,
     arranger_service: LiveArrangerService | None = None,
     audio_output_service: AudioOutputService | None = None,
+    custom_style_store: CustomStyleStore | None = None,
 ) -> FastAPI:
     """Create an application with an injectable, hardware-free MIDI service."""
 
     midi = service or MidiService()
     profiles = profile_store or MidiProfileStore()
     audio_outputs = audio_output_service or AudioOutputService()
+    custom_styles = custom_style_store or CustomStyleStore()
     arranger = arranger_service or LiveArrangerService()
     arranger_queue = midi.subscribe()
 
@@ -187,6 +237,10 @@ def create_app(
             midi.restore_ports(input_name=input_name, output_name=output_name)
         arranger.configure_profile(profile)
         try:
+            arranger.configure_custom_styles(custom_styles.load())
+        except CustomStyleError:
+            arranger.configure_custom_styles(())
+        try:
             output_status = audio_outputs.snapshot()
             selected_audio = output_status.get("selected")
             if output_status.get("available") is True and isinstance(
@@ -218,6 +272,7 @@ def create_app(
     app.state.profile_store = profiles
     app.state.arranger = arranger
     app.state.audio_output_service = audio_outputs
+    app.state.custom_style_store = custom_styles
     app.mount("/assets", StaticFiles(directory=STATIC_DIRECTORY), name="assets")
 
     @app.get("/", include_in_schema=False)
@@ -273,6 +328,95 @@ def create_app(
         try:
             return arranger.command(command.action, command.value)
         except ArrangerError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    def style_designer_catalog() -> dict[str, object]:
+        saved = custom_styles.load()
+        return {
+            "instruments": [
+                {
+                    "id": instrument.id,
+                    "name": instrument.name,
+                    "category": instrument.category,
+                    "program": instrument.program,
+                }
+                for instrument in INSTRUMENTS.values()
+            ],
+            "meters": [2, 3, 4],
+            "templates": [
+                {
+                    "id": style.id,
+                    "name": style.name,
+                    "tempo_bpm": style.default_tempo_bpm,
+                    "beats_per_bar": style.beats_per_bar,
+                }
+                for style in DEMO_STYLES.values()
+            ],
+            "styles": [style.to_dict() for style in saved],
+            "defaults": default_custom_style_payload(),
+        }
+
+    def require_stopped_arranger() -> None:
+        if arranger.advance().get("running") is True:
+            raise HTTPException(
+                status_code=409,
+                detail="stop the arranger before changing custom styles",
+            )
+
+    @app.get("/api/styles")
+    async def custom_style_catalog() -> dict[str, object]:
+        try:
+            return style_designer_catalog()
+        except CustomStyleError as error:
+            raise HTTPException(status_code=500, detail=str(error)) from error
+
+    @app.post("/api/styles/preview")
+    async def preview_custom_style(payload: StylePreviewPayload) -> dict[str, object]:
+        require_stopped_arranger()
+        try:
+            style = CustomStyle.from_mapping(
+                payload.style.model_dump(mode="json"), require_id=False
+            )
+            return arranger.preview_custom_style(style, payload.tempo_bpm)
+        except (ArrangerError, CustomStyleError) as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.delete("/api/styles/preview")
+    async def stop_custom_style_preview() -> dict[str, object]:
+        try:
+            return arranger.stop_style_preview()
+        except ArrangerError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.post("/api/styles", status_code=201)
+    async def create_custom_style(payload: CustomStylePayload) -> dict[str, object]:
+        require_stopped_arranger()
+        try:
+            created = custom_styles.create(payload.model_dump(mode="json"))
+            arranger.configure_custom_styles(custom_styles.load())
+            return created.to_dict()
+        except (ArrangerError, CustomStyleError) as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.put("/api/styles/{style_id}")
+    async def update_custom_style(
+        style_id: str, payload: CustomStylePayload
+    ) -> dict[str, object]:
+        require_stopped_arranger()
+        try:
+            updated = custom_styles.update(style_id, payload.model_dump(mode="json"))
+            arranger.configure_custom_styles(custom_styles.load())
+            return updated.to_dict()
+        except (ArrangerError, CustomStyleError) as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.delete("/api/styles/{style_id}", status_code=204)
+    async def delete_custom_style(style_id: str) -> None:
+        require_stopped_arranger()
+        try:
+            custom_styles.delete(style_id)
+            arranger.configure_custom_styles(custom_styles.load())
+        except (ArrangerError, CustomStyleError) as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
     @app.get("/api/audio/outputs")

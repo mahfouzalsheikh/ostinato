@@ -27,4 +27,6 @@ status refresh. Stopping the arranger clears the active light.
 - Deployed browser observation: passed. A silent running transport reported
   position tick 207 and zero-based beat index 2 while the page highlighted
   numbered light 3 of 4. The transport was stopped immediately afterward.
+- Compact visual refinement: deployed browser observation passed at 1680×1000;
+  the strip is seven pixels vertically padded and each light is 40×23 pixels.
 - Audible alignment with FR-4X performance: pending user confirmation.

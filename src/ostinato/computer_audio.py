@@ -185,7 +185,9 @@ class DemoArrangementRenderer:
 
     STYLE_NAME: ClassVar[str] = "modern_tango"
     DISPLAY_NAME: ClassVar[str] = "Modern Tango"
-    DESCRIPTION: ClassVar[str] = "Dramatic 3+3+2 tango with piano, reeds, and strings"
+    DESCRIPTION: ClassVar[str] = (
+        "Dramatic 3+3+2 tango with piano, acoustic guitar, and flute"
+    )
     DEFAULT_TEMPO_BPM: ClassVar[int] = 120
     OUTPUT_MODE: ClassVar[str] = "procedural_pcm"
     MASTER_GAIN: ClassVar[float] = 2.6
@@ -788,7 +790,7 @@ class ClassicTangoRenderer(DemoArrangementRenderer):
 
     STYLE_NAME = "classic_tango"
     DISPLAY_NAME = "Classic Tango"
-    DESCRIPTION = "Traditional marcato tango with piano, bass, bandoneon, and strings"
+    DESCRIPTION = "Traditional marcato tango with piano, acoustic guitar, and flute"
     DEFAULT_TEMPO_BPM = 120
     BEATS_PER_BAR = 4.0
     SYNCOPATION_GROUPS = (1.0, 1.0, 1.0, 1.0)
