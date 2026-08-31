@@ -117,6 +117,29 @@ class DemoArrangementRendererTests(unittest.TestCase):
                             )
                         )
 
+    def test_every_style_has_distinct_intro_ending_and_two_fill_materials(self) -> None:
+        for definition in DEMO_STYLES.values():
+            renderer = definition.renderer
+            with self.subTest(style=definition.id):
+                main = tuple(
+                    renderer._groove_for_section(DemoSection.MAIN, bar)
+                    for bar in range(4)
+                )
+                intro = tuple(
+                    renderer._groove_for_section(DemoSection.INTRO, bar)
+                    for bar in range(4)
+                )
+                ending = tuple(
+                    renderer._groove_for_section(DemoSection.ENDING, bar)
+                    for bar in range(4)
+                )
+                fill_one = renderer._groove_for_section(DemoSection.MAIN, 0, 1)
+                fill_two = renderer._groove_for_section(DemoSection.MAIN, 0, 2)
+
+                self.assertNotEqual(intro, main)
+                self.assertNotEqual(ending, main)
+                self.assertNotEqual(fill_one, fill_two)
+
     def test_each_style_intro_and_ending_span_four_bars(self) -> None:
         renderers = (
             DemoArrangementRenderer,
@@ -330,6 +353,19 @@ class DemoArrangementRendererTests(unittest.TestCase):
         renderer.resume_if_stopped()
         self.assertEqual(renderer.section, DemoSection.MAIN)
 
+    def test_fill_is_quantized_to_next_bar_and_clears_after_one_bar(self) -> None:
+        renderer = DemoArrangementRenderer(
+            DemoAudioConfig(tempo_bpm=60, sample_rate=100)
+        )
+
+        renderer.request_fill(2)
+        self.assertEqual(renderer.fill_variation, 2)
+        renderer.render(799, chord(9, ChordQuality.MINOR))
+        self.assertEqual(renderer.fill_variation, 2)
+        renderer.render(1, chord(9, ChordQuality.MINOR))
+
+        self.assertIsNone(renderer.fill_variation)
+
     def test_intro_and_ending_orchestrate_six_independent_parts(self) -> None:
         intro_first = DemoArrangementRenderer._ensemble_levels(DemoSection.INTRO, 0.0)
         intro_last = DemoArrangementRenderer._ensemble_levels(DemoSection.INTRO, 12.0)
@@ -337,7 +373,7 @@ class DemoArrangementRendererTests(unittest.TestCase):
         ending_last = DemoArrangementRenderer._ensemble_levels(DemoSection.ENDING, 12.0)
 
         self.assertEqual(intro_first.bass, 0.0)
-        self.assertEqual(intro_first.piano, 0.0)
+        self.assertGreater(intro_first.piano, 0.0)
         self.assertEqual(intro_first.drums, 0.0)
         self.assertGreater(intro_first.bandoneon, 0.0)
         self.assertGreater(intro_first.percussion, 0.0)

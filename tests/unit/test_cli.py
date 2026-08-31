@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import contextlib
 import io
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from ostinato.cli import build_parser, main
@@ -66,6 +68,76 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         run.assert_called_once_with(host="0.0.0.0", port=8123)
+
+    def test_soundfont_comparison_delegates_with_explicit_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            output = Path(temporary_name) / "comparison"
+            with patch(
+                "ostinato.cli.render_soundfont_comparison", return_value=(object(),)
+            ) as render:
+                exit_code = main(
+                    [
+                        "soundfont-compare",
+                        "--output",
+                        str(output),
+                        "--style",
+                        "classic_waltz",
+                        "--hq",
+                        "/sounds/hq.sf3",
+                        "--legacy",
+                        "/sounds/legacy.sf2",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        output_path, styles, variants = render.call_args.args
+        self.assertEqual(output_path, output)
+        self.assertEqual(styles, ("classic_waltz",))
+        self.assertEqual([variant.id for variant in variants], ["hq", "legacy"])
+
+    def test_waltz_comparison_uses_configured_open_sample_rack(self) -> None:
+        sfz_paths = object()
+        with tempfile.TemporaryDirectory() as temporary_name:
+            output = Path(temporary_name) / "comparison"
+            with (
+                patch.dict("os.environ", {"OSTINATO_SOUNDFONT": "/sounds/hq.sf3"}),
+                patch(
+                    "ostinato.cli.SfzWaltzPaths.from_environment",
+                    return_value=sfz_paths,
+                ),
+                patch(
+                    "ostinato.cli.render_waltz_realism_comparison",
+                    return_value=(object(), object()),
+                ) as render,
+            ):
+                exit_code = main(["waltz-compare", "--output", str(output)])
+
+        self.assertEqual(exit_code, 0)
+        render.assert_called_once_with(output, Path("/sounds/hq.sf3"), sfz_paths)
+
+    def test_sfz_comparison_uses_all_builtins_by_default(self) -> None:
+        sfz_paths = object()
+        with tempfile.TemporaryDirectory() as temporary_name:
+            output = Path(temporary_name) / "comparison"
+            with (
+                patch.dict("os.environ", {"OSTINATO_SOUNDFONT": "/sounds/hq.sf3"}),
+                patch(
+                    "ostinato.cli.SfzStylePaths.from_environment",
+                    return_value=sfz_paths,
+                ),
+                patch(
+                    "ostinato.cli.render_open_sample_comparison",
+                    return_value=(object(), object()),
+                ) as render,
+            ):
+                exit_code = main(["sfz-compare", "--output", str(output)])
+
+        self.assertEqual(exit_code, 0)
+        output_path, styles, soundfont, configured_paths = render.call_args.args
+        self.assertEqual(output_path, output)
+        self.assertEqual(len(styles), 14)
+        self.assertEqual(soundfont, Path("/sounds/hq.sf3"))
+        self.assertIs(configured_paths, sfz_paths)
 
 
 if __name__ == "__main__":

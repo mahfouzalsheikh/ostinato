@@ -88,10 +88,13 @@ class WebServerTests(unittest.TestCase):
         self.assertIn('id="arranger-style"', index.text)
         self.assertIn('id="arranger-intro"', index.text)
         self.assertIn('id="arranger-ending"', index.text)
+        self.assertIn('id="arranger-fill-1"', index.text)
+        self.assertIn('id="arranger-fill-2"', index.text)
         self.assertIn('id="arranger-tempo-mode"', index.text)
         self.assertIn('id="arranger-fixed-tempo"', index.text)
         self.assertIn('id="arranger-beat-lights"', index.text)
         self.assertIn('id="arranger-beat-label"', index.text)
+        self.assertIn('id="arranger-style-timeline"', index.text)
         self.assertIn('id="audio-output-dialog"', index.text)
         self.assertIn('id="audio-output-select"', index.text)
         self.assertIn('id="test-audio-output"', index.text)
@@ -107,10 +110,12 @@ class WebServerTests(unittest.TestCase):
         self.assertIn('id="designer-preview-tempo"', index.text)
         self.assertIn('id="designer-preview-play"', index.text)
         self.assertIn('id="designer-preview-stop"', index.text)
+        self.assertIn('id="designer-style-timeline"', index.text)
         self.assertNotIn("Configure the sound module", index.text)
         app_script = self.client.get("/assets/app.js")
         self.assertEqual(app_script.status_code, 200)
         self.assertIn("scheduleDesignerPreviewRestart", app_script.text)
+        self.assertIn("updateTimelinePlayhead", app_script.text)
         self.assertNotIn("Press Restart to hear the update", app_script.text)
 
     def test_arranger_catalog_and_safe_stopped_controls_are_available(self) -> None:
@@ -213,6 +218,25 @@ class WebServerTests(unittest.TestCase):
         self.assertEqual(len(after_edit.json()["styles"]), 1)
         self.assertEqual(deleted.status_code, 204)
         self.assertEqual(self.client.get("/api/styles").json()["styles"], [])
+
+    def test_builtin_and_custom_style_timelines_share_the_same_lane_model(self) -> None:
+        catalog = self.client.get("/api/styles").json()
+        builtin = self.client.get("/api/styles/swing_foxtrot/timeline")
+        created = self.client.post(
+            "/api/styles", json=default_custom_style_payload("classic_waltz")
+        ).json()
+        custom = self.client.get(f"/api/styles/{created['id']}/timeline")
+        missing = self.client.get("/api/styles/custom-000000000000/timeline")
+
+        self.assertIn("timeline", catalog["templates"][0])
+        self.assertEqual(builtin.status_code, 200)
+        self.assertEqual(custom.status_code, 200)
+        for response in (builtin, custom):
+            self.assertEqual(
+                [lane["id"] for lane in response.json()["lanes"]],
+                ["bass", "comp", "fill", "backing", "drums"],
+            )
+        self.assertEqual(missing.status_code, 404)
 
     def test_unsaved_style_preview_and_stop_reach_the_arranger(self) -> None:
         arranger = create_autospec(LiveArrangerService, instance=True)

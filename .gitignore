@@ -9,6 +9,6 @@ htmlcov/
 dist/
 build/
 *.egg-info/
-recordings/*.jsonl
-!recordings/README.md
-
+.playwright-mcp/
+linkedin-article.md
+linkedin-post.md

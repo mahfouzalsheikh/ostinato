@@ -9,7 +9,23 @@ services:
     user: "0:0"
     environment:
       OSTINATO_STATE_DIRECTORY: /var/lib/ostinato
-      OSTINATO_SOUNDFONT: /usr/share/sounds/sf2/TimGM6mb.sf2
+      OSTINATO_SOUNDFONT: ${OSTINATO_SOUNDFONT:-/usr/share/sounds/sf3/MuseScore_General_Full.sf3}
+      OSTINATO_SOUNDFONT_NAME: ${OSTINATO_SOUNDFONT_NAME:-MuseScore General HQ}
+      OSTINATO_LEGACY_SOUNDFONT: /usr/share/sounds/sf2/TimGM6mb.sf2
+      OSTINATO_SFIZZ_LIBRARY: /usr/local/lib/libsfizz.so
+      OSTINATO_WALTZ_SFZ_PIANO: /opt/ostinato-samples/SalamanderGrandPianoV3_44.1khz16bit/SalamanderGrandPianoV3.sfz
+      OSTINATO_WALTZ_SFZ_BASS: /opt/ostinato-samples/Meatbass/Programs/04_pizz.sfz
+      OSTINATO_WALTZ_SFZ_FLUTE: /opt/ostinato-samples/VSCO2/FluteSusVib.sfz
+      OSTINATO_WALTZ_SFZ_CELLO: /opt/ostinato-samples/VSCO2/CelloEnsSusVib-Quiet.sfz
+      OSTINATO_WALTZ_SFZ_VIOLIN: /opt/ostinato-samples/VSCO2/SViolinVib-Quiet.sfz
+      OSTINATO_WALTZ_SFZ_DRUMS: /opt/ostinato-samples/Swirly Drums/Programs/Basic_kit.sfz
+      OSTINATO_STYLE_SFZ_ACOUSTIC_GUITAR: /opt/ostinato-samples/Shinyguitar/Programs/acoustic-main.sfz
+      OSTINATO_STYLE_SFZ_ELECTRIC_GUITAR: /opt/ostinato-samples/Shinyguitar/Programs/main.sfz
+      OSTINATO_STYLE_SFZ_ELECTRIC_BASS_FINGER: /opt/ostinato-samples/Black Blue Basses/Programs/05-darkblack_pluck.sfz
+      OSTINATO_STYLE_SFZ_ELECTRIC_BASS_PICK: /opt/ostinato-samples/Black Blue Basses/Programs/03-babyblue_all.sfz
+      OSTINATO_STYLE_SFZ_DRUM_KIT: /opt/ostinato-samples/Virtuosity Drums/Programs/02-full-kit.sfz
+      OSTINATO_STYLE_SFZ_CLARINET: /opt/ostinato-samples/VSCO2/ClarinetStac.sfz
+      OSTINATO_STYLE_SFZ_TRUMPET: /opt/ostinato-samples/VSCO2/TrumpetStac.sfz
       PIPEWIRE_RUNTIME_DIR: /run/ostinato-pipewire
     devices:
       - /dev/snd:/dev/snd

@@ -348,6 +348,8 @@ class SoundFontArrangementRenderer:
         self._section = DemoSection.MAIN
         self._section_start_beat = 0.0
         self._ending_at_beat: float | None = None
+        self._fill_at_beat: float | None = None
+        self._fill_variation: int | None = None
         self._events: list[_SynthEvent] = []
         self._event_order = 0
         self._chord_signature: tuple[int, ChordQuality, int | None] | None = None
@@ -374,6 +376,13 @@ class SoundFontArrangementRenderer:
             self._beat_at_frame(self._frame_position) * TRANSPORT_TICKS_PER_BEAT
         )
 
+    @property
+    def fill_variation(self) -> int | None:
+        """Return the queued or currently sounding fill variation."""
+
+        self._advance_section(self._beat_at_frame(self._frame_position))
+        return self._fill_variation
+
     def set_tempo(self, tempo_bpm: int) -> None:
         if not MIN_TEMPO_BPM <= tempo_bpm <= MAX_TEMPO_BPM:
             raise ValueError(
@@ -392,6 +401,8 @@ class SoundFontArrangementRenderer:
         self._section = DemoSection.MAIN
         self._section_start_beat = 0.0
         self._ending_at_beat = None
+        self._fill_at_beat = None
+        self._fill_variation = None
         self._chord_signature = None
 
     def start_main(self) -> None:
@@ -401,6 +412,8 @@ class SoundFontArrangementRenderer:
         self._all_sound_off()
         self._section = DemoSection.STOPPED
         self._ending_at_beat = None
+        self._fill_at_beat = None
+        self._fill_variation = None
 
     def start_intro(self) -> None:
         self.reset()
@@ -412,6 +425,18 @@ class SoundFontArrangementRenderer:
         beat = self._beat_at_frame(self._frame_position)
         beats_per_bar = self._renderer_type.BEATS_PER_BAR
         self._ending_at_beat = (math.floor(beat / beats_per_bar) + 1) * beats_per_bar
+
+    def request_fill(self, variation: int) -> None:
+        """Queue one of two one-bar fills at the next measure boundary."""
+
+        if variation not in (1, 2):
+            raise ValueError("fill variation must be 1 or 2")
+        if self.section is not DemoSection.MAIN or self._ending_at_beat is not None:
+            return
+        beat = self._beat_at_frame(self._frame_position)
+        beats_per_bar = self._renderer_type.BEATS_PER_BAR
+        self._fill_at_beat = (math.floor(beat / beats_per_bar) + 1) * beats_per_bar
+        self._fill_variation = variation
 
     def resume_if_stopped(self) -> None:
         if self.section is DemoSection.STOPPED:
@@ -491,9 +516,23 @@ class SoundFontArrangementRenderer:
                 if section is DemoSection.MAIN and self._custom_style is not None
                 else len(self._renderer_type._GROOVE)
             )
-            groove = self._renderer_type._GROOVE[bar_index % phrase_bars]
             bar_section_beat = bar_index * beats_per_bar
             bar_absolute_beat = self._section_start_beat + bar_section_beat
+            fill_variation = (
+                self._fill_variation
+                if section is DemoSection.MAIN
+                and self._fill_at_beat is not None
+                and math.isclose(bar_absolute_beat, self._fill_at_beat, abs_tol=1e-7)
+                else None
+            )
+            if section is DemoSection.MAIN and self._custom_style is not None:
+                groove = self._renderer_type._GROOVE[bar_index % phrase_bars]
+                if fill_variation is not None:
+                    groove = self._renderer_type._fill_groove(groove, fill_variation)
+            else:
+                groove = self._renderer_type._groove_for_section(
+                    section, bar_index, fill_variation
+                )
             levels = self._customize_levels(
                 self._renderer_type._ensemble_levels(section, bar_section_beat)
             )
@@ -927,6 +966,8 @@ class SoundFontArrangementRenderer:
             self._section = DemoSection.ENDING
             self._section_start_beat = self._ending_at_beat
             self._ending_at_beat = None
+            self._fill_at_beat = None
+            self._fill_variation = None
         section_beat = beat - self._section_start_beat
         length = self._renderer_type._SECTION_LENGTH_BEATS
         if self._section is DemoSection.INTRO and section_beat >= length:
@@ -937,6 +978,12 @@ class SoundFontArrangementRenderer:
             self._all_sound_off()
             self._section = DemoSection.STOPPED
             section_beat = length
+        if (
+            self._fill_at_beat is not None
+            and beat >= self._fill_at_beat + self._renderer_type.BEATS_PER_BAR
+        ):
+            self._fill_at_beat = None
+            self._fill_variation = None
         return self._section, section_beat
 
     def _beat_at_frame(self, frame: int) -> float:

@@ -31,6 +31,12 @@ from ostinato.computer_audio import (
 )
 from ostinato.domain import PITCH_CLASS_NAMES, ChordQuality, ChordState
 from ostinato.keyboard_input import MAX_TEMPO_BPM, MIN_TEMPO_BPM
+from ostinato.sfz_audio import (
+    SfzStyleArrangementRenderer,
+    SfzStylePaths,
+    SfzWaltzArrangementRenderer,
+    SfzWaltzPaths,
+)
 from ostinato.soundfont_audio import SoundFontArrangementRenderer
 from ostinato.style_designer import CustomStyle
 
@@ -318,6 +324,10 @@ class ArrangerAudio(Protocol):
     def position_ticks(self) -> int | None:
         """Return the rendered transport position in integer quarter-note ticks."""
 
+    @property
+    def fill_variation(self) -> int | None:
+        """Return the queued or currently sounding fill variation."""
+
     def select_style(
         self, style_id: str, custom_style: CustomStyle | None = None
     ) -> None: ...
@@ -331,6 +341,8 @@ class ArrangerAudio(Protocol):
     def start_intro(self) -> None: ...
 
     def request_ending(self) -> None: ...
+
+    def request_fill(self, variation: int) -> None: ...
 
     def stop(self) -> None: ...
 
@@ -347,6 +359,9 @@ class ProceduralArrangerAudio:
         *,
         sink_factory: Callable[[DemoAudioConfig, str], PcmSink] | None = None,
         soundfont_path: str | None = None,
+        soundfont_name: str | None = None,
+        sfz_waltz_paths: SfzWaltzPaths | None = None,
+        sfz_style_paths: SfzStylePaths | None = None,
     ) -> None:
         first_style = next(iter(DEMO_STYLES.values()))
         self._style_id = first_style.id
@@ -357,6 +372,19 @@ class ProceduralArrangerAudio:
             lambda config, device: open_pcm_sink(config, device)
         )
         self._soundfont_path = soundfont_path or os.environ.get("OSTINATO_SOUNDFONT")
+        self._soundfont_name = soundfont_name or os.environ.get(
+            "OSTINATO_SOUNDFONT_NAME", "configured SoundFont"
+        )
+        self._sfz_style_paths = sfz_style_paths or SfzStylePaths.from_environment()
+        self._sfz_waltz_paths = (
+            sfz_waltz_paths
+            or (
+                self._sfz_style_paths.waltz
+                if self._sfz_style_paths is not None
+                else None
+            )
+            or SfzWaltzPaths.from_environment()
+        )
         self._device: str | None = None
         self._session: RealtimeDemoArranger | None = None
 
@@ -386,6 +414,12 @@ class ProceduralArrangerAudio:
         return self._session.position_ticks
 
     @property
+    def fill_variation(self) -> int | None:
+        if self._session is None:
+            return None
+        return self._session.fill_variation
+
+    @property
     def error(self) -> str | None:
         """Expose an asynchronous ALSA worker failure to arranger status."""
 
@@ -395,7 +429,17 @@ class ProceduralArrangerAudio:
     def synthesis_engine(self) -> str:
         """Describe the active renderer without exposing a machine path."""
 
-        return "FluidSynth SoundFont" if self._soundfont_path else "procedural PCM"
+        if (
+            self._style_id == "classic_waltz"
+            and self._custom_style is None
+            and self._sfz_waltz_paths is not None
+        ):
+            return "sfizz · open sampled orchestra"
+        if self._custom_style is None and self._sfz_style_paths is not None:
+            return "sfizz · open sampled genre ensemble"
+        if self._soundfont_path:
+            return f"FluidSynth · {self._soundfont_name}"
+        return "procedural PCM"
 
     def select_style(
         self, style_id: str, custom_style: CustomStyle | None = None
@@ -437,6 +481,10 @@ class ProceduralArrangerAudio:
         if self._session is not None:
             self._session.request_ending()
 
+    def request_fill(self, variation: int) -> None:
+        if self._session is not None:
+            self._session.request_fill(variation)
+
     def stop(self) -> None:
         if self._session is not None:
             self._session.stop_playback()
@@ -457,10 +505,48 @@ class ProceduralArrangerAudio:
                 raise ArrangerError(
                     f"could not open accompaniment audio: {error}"
                 ) from error
-            if self._soundfont_path:
+            if (
+                self._style_id == "classic_waltz"
+                and self._custom_style is None
+                and self._sfz_waltz_paths is not None
+            ):
+                sfz_waltz_paths = self._sfz_waltz_paths
+
+                def sfz_renderer_factory(
+                    style_id: str, renderer_config: DemoAudioConfig
+                ) -> SfzWaltzArrangementRenderer:
+                    if style_id != "classic_waltz":
+                        raise ArrangerError(
+                            "the open SFZ orchestra is available only for Classic Waltz"
+                        )
+                    return SfzWaltzArrangementRenderer(renderer_config, sfz_waltz_paths)
+
+                self._session = RealtimeDemoArranger(
+                    config,
+                    sink,
+                    style_id=self._style_id,
+                    renderer_factory=sfz_renderer_factory,
+                )
+            elif self._custom_style is None and self._sfz_style_paths is not None:
+                sfz_style_paths = self._sfz_style_paths
+
+                def sfz_style_renderer_factory(
+                    style_id: str, renderer_config: DemoAudioConfig
+                ) -> SfzStyleArrangementRenderer:
+                    return SfzStyleArrangementRenderer(
+                        style_id, renderer_config, sfz_style_paths
+                    )
+
+                self._session = RealtimeDemoArranger(
+                    config,
+                    sink,
+                    style_id=self._style_id,
+                    renderer_factory=sfz_style_renderer_factory,
+                )
+            elif self._soundfont_path:
                 soundfont_path = self._soundfont_path
 
-                def renderer_factory(
+                def soundfont_renderer_factory(
                     style_id: str, renderer_config: DemoAudioConfig
                 ) -> SoundFontArrangementRenderer:
                     return SoundFontArrangementRenderer(
@@ -474,7 +560,7 @@ class ProceduralArrangerAudio:
                     config,
                     sink,
                     style_id=self._style_id,
-                    renderer_factory=renderer_factory,
+                    renderer_factory=soundfont_renderer_factory,
                 )
             else:
                 self._session = RealtimeDemoArranger(
@@ -596,6 +682,14 @@ class LiveArrangerService:
             elif action == "ending":
                 if self._running:
                     self._audio.request_ending()
+            elif action == "fill":
+                if type(value) is not int or value not in (1, 2):
+                    raise ArrangerError("fill command requires variation 1 or 2")
+                if not self._running or self._audio.section is not DemoSection.MAIN:
+                    raise ArrangerError(
+                        "fill-ins are available while the main style is playing"
+                    )
+                self._audio.request_fill(value)
             elif action == "sync":
                 if not isinstance(value, bool):
                     raise ArrangerError("sync command requires a boolean value")
@@ -789,6 +883,7 @@ class LiveArrangerService:
             "beat_index": beat_index,
             "running": self._running,
             "section": section,
+            "fill_variation": (self._audio.fill_variation if self._running else None),
             "sync_enabled": self._sync_enabled,
             "sync_stop_bars": SYNC_STOP_BARS,
             "chord": self._harmony_name(),

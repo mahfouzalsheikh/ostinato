@@ -181,7 +181,6 @@ def collect_report(
     for module, distribution in (
         ("mido", "mido"),
         ("rtmidi", "python-rtmidi"),
-        ("yaml", "PyYAML"),
     ):
         available = importlib.util.find_spec(module) is not None
         checks.append(

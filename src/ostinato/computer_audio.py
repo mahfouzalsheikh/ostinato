@@ -14,7 +14,7 @@ import threading
 from array import array
 from collections.abc import Callable
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import IO, ClassVar, Protocol, TextIO
 
@@ -67,6 +67,9 @@ class ArrangementRenderer(Protocol):
     @property
     def position_ticks(self) -> int: ...
 
+    @property
+    def fill_variation(self) -> int | None: ...
+
     def set_tempo(self, tempo_bpm: int) -> None: ...
 
     def reset(self) -> None: ...
@@ -78,6 +81,8 @@ class ArrangementRenderer(Protocol):
     def start_intro(self) -> None: ...
 
     def request_ending(self) -> None: ...
+
+    def request_fill(self, variation: int) -> None: ...
 
     def resume_if_stopped(self) -> None: ...
 
@@ -196,7 +201,8 @@ class DemoArrangementRenderer:
     STYLE_NAME: ClassVar[str] = "modern_tango"
     DISPLAY_NAME: ClassVar[str] = "Modern Tango"
     DESCRIPTION: ClassVar[str] = (
-        "Dramatic 3+3+2 tango with piano, acoustic guitar, and flute"
+        "Dramatic 3+3+2 tango with prominent piano, upright bass, strings, "
+        "and percussion"
     )
     DEFAULT_TEMPO_BPM: ClassVar[int] = 120
     OUTPUT_MODE: ClassVar[str] = "procedural_pcm"
@@ -307,10 +313,10 @@ class DemoArrangementRenderer:
         strings=0.65,
     )
     _INTRO_LEVELS: ClassVar[tuple[EnsembleLevels, ...]] = (
-        EnsembleLevels(0.0, 0.0, 0.22, 0.0, 0.18, 0.78),
-        EnsembleLevels(0.42, 0.48, 0.38, 0.12, 0.42, 0.85),
-        EnsembleLevels(0.75, 0.68, 0.72, 0.50, 0.68, 0.78),
-        EnsembleLevels(0.95, 0.80, 0.95, 0.80, 0.74, 0.68),
+        EnsembleLevels(0.0, 0.75, 0.62, 0.0, 0.20, 0.74),
+        EnsembleLevels(0.34, 0.82, 0.70, 0.16, 0.42, 0.78),
+        EnsembleLevels(0.60, 0.88, 0.80, 0.46, 0.62, 0.72),
+        EnsembleLevels(0.80, 0.92, 0.90, 0.72, 0.72, 0.64),
     )
     _ENDING_LEVELS: ClassVar[tuple[EnsembleLevels, ...]] = (
         EnsembleLevels(1.0, 0.82, 1.0, 0.85, 0.75, 0.68),
@@ -328,6 +334,8 @@ class DemoArrangementRenderer:
         self._section = DemoSection.MAIN
         self._section_start_beat = 0.0
         self._ending_at_beat: float | None = None
+        self._fill_at_beat: float | None = None
+        self._fill_variation: int | None = None
 
     @property
     def frame_position(self) -> int:
@@ -360,6 +368,13 @@ class DemoArrangementRenderer:
         self._advance_section(self.beat_position)
         return self._section
 
+    @property
+    def fill_variation(self) -> int | None:
+        """Return the queued or currently sounding one-bar fill variation."""
+
+        self._advance_section(self.beat_position)
+        return self._fill_variation
+
     def set_tempo(self, tempo_bpm: int) -> None:
         """Change tempo at the current frame without jumping musical position."""
 
@@ -381,6 +396,8 @@ class DemoArrangementRenderer:
         self._section = DemoSection.MAIN
         self._section_start_beat = 0.0
         self._ending_at_beat = None
+        self._fill_at_beat = None
+        self._fill_variation = None
 
     def start_main(self) -> None:
         """Restart the main pattern from its first bar."""
@@ -392,6 +409,8 @@ class DemoArrangementRenderer:
 
         self._section = DemoSection.STOPPED
         self._ending_at_beat = None
+        self._fill_at_beat = None
+        self._fill_variation = None
 
     def start_intro(self) -> None:
         """Restart with the original four-measure introduction."""
@@ -407,6 +426,18 @@ class DemoArrangementRenderer:
         current_beat = self.beat_position
         bar = math.floor(current_beat / self.BEATS_PER_BAR) + 1
         self._ending_at_beat = bar * self.BEATS_PER_BAR
+
+    def request_fill(self, variation: int) -> None:
+        """Queue one of two one-bar fills at the next measure boundary."""
+
+        if variation not in (1, 2):
+            raise ValueError("fill variation must be 1 or 2")
+        if self.section is not DemoSection.MAIN or self._ending_at_beat is not None:
+            return
+        current_beat = self.beat_position
+        bar = math.floor(current_beat / self.BEATS_PER_BAR) + 1
+        self._fill_at_beat = bar * self.BEATS_PER_BAR
+        self._fill_variation = variation
 
     def resume_if_stopped(self) -> None:
         """Start a fresh main phrase if a prior ending has completed."""
@@ -442,7 +473,13 @@ class DemoArrangementRenderer:
             return 0.0, 0.0
         bar_phase = section_beat % self.BEATS_PER_BAR
         bar_index = math.floor(section_beat / self.BEATS_PER_BAR)
-        groove = self._GROOVE[bar_index % len(self._GROOVE)]
+        fill_variation = (
+            self._fill_variation
+            if self._fill_at_beat is not None
+            and self._fill_at_beat <= beat < self._fill_at_beat + self.BEATS_PER_BAR
+            else None
+        )
+        groove = self._groove_for_section(section, bar_index, fill_variation)
         seconds_per_beat = 60 / self._tempo_bpm
         levels = self._ensemble_levels(section, section_beat)
 
@@ -708,6 +745,177 @@ class DemoArrangementRenderer:
         return click + shaker
 
     @classmethod
+    def _groove_for_section(
+        cls,
+        section: DemoSection,
+        bar_index: int,
+        fill_variation: int | None = None,
+    ) -> GrooveBar:
+        """Choose section-specific musical material for one style bar."""
+
+        groove = cls._GROOVE[bar_index % len(cls._GROOVE)]
+        if fill_variation is not None:
+            return cls._fill_groove(groove, fill_variation)
+        if section is DemoSection.INTRO:
+            return cls._intro_groove(groove, bar_index % 4)
+        if section is DemoSection.ENDING:
+            return cls._ending_groove(groove, bar_index % 4)
+        return groove
+
+    @classmethod
+    def _intro_groove(cls, groove: GrooveBar, bar: int) -> GrooveBar:
+        """Shape each genre's own groove into a four-stage introduction."""
+
+        if "tango" in cls.STYLE_NAME:
+            tango_chords = (
+                (0.0, 0.75, 1.5, 2.25, 3.0, 3.5),
+                (0.0, 0.5, 1.5, 2.0, 3.0, 3.5),
+                (0.0, 1.0, 1.5, 2.5, 3.0, 3.75),
+                (0.0, 0.5, 1.5, 2.0, 3.0, 3.5, 3.75),
+            )[bar]
+            tango_reed = (
+                (0.0, 1.5, 2.25, 3.5),
+                (0.5, 1.5, 2.5, 3.5),
+                (0.0, 1.0, 2.5, 3.0, 3.75),
+                (0.0, 1.5, 2.0, 3.0, 3.5, 3.75),
+            )[bar]
+            return replace(
+                groove,
+                chord_onsets=tango_chords,
+                chord_accents=tuple(
+                    1.18 if index in (0, len(tango_chords) - 1) else 0.88
+                    for index in range(len(tango_chords))
+                ),
+                reed_onsets=tango_reed,
+                reed_accents=tuple(
+                    1.12 if index in (0, len(tango_reed) - 1) else 0.82
+                    for index in range(len(tango_reed))
+                ),
+                auxiliary_onsets=(0.75, 1.5, 2.25, 3.0, 3.5, 3.75),
+                auxiliary_accents=(0.72, 0.82, 0.88, 1.0, 1.08, 1.18),
+                shaker_accents=(0, 3, 6, 9, 12, 14, 15),
+            )
+        if bar == 0:
+            first_chord = groove.chord_onsets[:1] or (0.0,)
+            return replace(
+                groove,
+                chord_onsets=first_chord,
+                chord_accents=(1.12,),
+                kick_onsets=groove.kick_onsets[:1],
+                kick_accents=(),
+                snare_onsets=groove.snare_onsets[:1],
+                snare_accents=(),
+                auxiliary_onsets=groove.auxiliary_onsets[-1:],
+                auxiliary_accents=(),
+                reed_onsets=(cls.BEATS_PER_BAR - 0.5,),
+                reed_accents=(0.82,),
+            )
+        if bar == 1:
+            return replace(
+                groove,
+                kick_onsets=groove.kick_onsets[::2] or groove.kick_onsets[:1],
+                kick_accents=(),
+                snare_onsets=groove.snare_onsets[::2] or groove.snare_onsets[:1],
+                snare_accents=(),
+                auxiliary_onsets=groove.auxiliary_onsets[::2],
+                auxiliary_accents=(),
+            )
+        if bar == 2:
+            return replace(
+                groove,
+                reed_onsets=groove.reed_onsets or groove.chord_onsets[-2:],
+                reed_accents=(),
+            )
+        return cls._fill_groove(groove, 1)
+
+    @classmethod
+    def _ending_groove(cls, groove: GrooveBar, bar: int) -> GrooveBar:
+        """Shape the genre groove toward a clear, performed cadence."""
+
+        if "tango" in cls.STYLE_NAME and bar < 3:
+            return cls._fill_groove(groove, 2 if bar == 2 else 1)
+        if bar == 2:
+            return cls._fill_groove(groove, 2)
+        if bar == 3:
+            return replace(
+                groove,
+                bass_onsets=(0.0,),
+                bass_intervals=(0,),
+                bass_roles=("root",),
+                bass_accents=(1.22,),
+                kick_onsets=(0.0,),
+                kick_accents=(1.18,),
+                snare_onsets=(cls.BEATS_PER_BAR - 0.5,),
+                snare_accents=(0.76,),
+                auxiliary_onsets=(cls.BEATS_PER_BAR - 0.5,),
+                auxiliary_accents=(0.62,),
+                hat_onsets=(),
+                hat_accents=(),
+                pad_onsets=(0.0,),
+            )
+        return groove
+
+    @classmethod
+    def _fill_groove(cls, groove: GrooveBar, variation: int) -> GrooveBar:
+        """Create two distinct, meter-safe fill-ins from the genre vocabulary."""
+
+        end = cls.BEATS_PER_BAR
+        if variation == 1:
+            chord_onsets = tuple(
+                sorted(set((*groove.chord_onsets, end - 0.5, end - 0.25)))
+            )
+            return replace(
+                groove,
+                chord_onsets=chord_onsets,
+                chord_accents=tuple(
+                    1.14 if onset >= end - 0.5 else 0.92 for onset in chord_onsets
+                ),
+                snare_onsets=tuple(
+                    sorted(
+                        set(
+                            (
+                                *groove.snare_onsets,
+                                end - 0.75,
+                                end - 0.5,
+                                end - 0.25,
+                            )
+                        )
+                    )
+                ),
+                snare_accents=(),
+                auxiliary_onsets=tuple(
+                    sorted(set((*groove.auxiliary_onsets, end - 0.75, end - 0.25)))
+                ),
+                auxiliary_accents=(),
+                reed_onsets=(end - 1.0, end - 0.5, end - 0.25),
+                reed_accents=(0.78, 0.96, 1.16),
+            )
+        bass_onsets = tuple(
+            sorted(set((*groove.bass_onsets, end - 0.75, end - 0.5, end - 0.25)))
+        )
+        bass_roles = tuple(
+            "root" if onset == 0.0 else ("fifth" if round(onset * 4) % 2 else "octave")
+            for onset in bass_onsets
+        )
+        return replace(
+            groove,
+            bass_onsets=bass_onsets,
+            bass_intervals=tuple(0 for _ in bass_onsets),
+            bass_roles=bass_roles,
+            bass_accents=tuple(
+                1.12 if onset >= end - 0.75 else 0.94 for onset in bass_onsets
+            ),
+            chord_onsets=(0.0, end - 1.0, end - 0.5, end - 0.25),
+            chord_accents=(1.08, 0.82, 0.96, 1.18),
+            kick_onsets=tuple(sorted(set((*groove.kick_onsets, end - 0.5)))),
+            kick_accents=(),
+            auxiliary_onsets=(end - 1.0, end - 0.75, end - 0.5, end - 0.25),
+            auxiliary_accents=(0.72, 0.84, 0.98, 1.18),
+            reed_onsets=(end - 1.5, end - 1.0, end - 0.5, end - 0.25),
+            reed_accents=(0.72, 0.84, 1.0, 1.2),
+        )
+
+    @classmethod
     def _ensemble_levels(
         cls, section: DemoSection, section_beat: float
     ) -> EnsembleLevels:
@@ -732,6 +940,8 @@ class DemoArrangementRenderer:
             self._section = DemoSection.ENDING
             self._section_start_beat = self._ending_at_beat
             self._ending_at_beat = None
+            self._fill_at_beat = None
+            self._fill_variation = None
 
         section_beat = beat - self._section_start_beat
         if (
@@ -747,6 +957,12 @@ class DemoArrangementRenderer:
         ):
             self._section = DemoSection.STOPPED
             section_beat = self._SECTION_LENGTH_BEATS
+        if (
+            self._fill_at_beat is not None
+            and beat >= self._fill_at_beat + self.BEATS_PER_BAR
+        ):
+            self._fill_at_beat = None
+            self._fill_variation = None
         return self._section, section_beat
 
     def _beat_at_frame(self, frame: int) -> float:
@@ -819,7 +1035,10 @@ class ClassicTangoRenderer(DemoArrangementRenderer):
 
     STYLE_NAME = "classic_tango"
     DISPLAY_NAME = "Classic Tango"
-    DESCRIPTION = "Traditional marcato tango with piano, acoustic guitar, and flute"
+    DESCRIPTION = (
+        "Traditional marcato and sincopa with prominent piano, upright bass, "
+        "and strings"
+    )
     DEFAULT_TEMPO_BPM = 120
     BEATS_PER_BAR = 4.0
     SYNCOPATION_GROUPS = (1.0, 1.0, 1.0, 1.0)
@@ -2109,6 +2328,7 @@ class RealtimeDemoArranger:
         self._resume_requested = False
         self._intro_requested = False
         self._ending_requested = False
+        self._fill_requested: int | None = None
         self._start_requested = False
         self._stop_playback_requested = False
         self._style_requested: str | None = None
@@ -2187,6 +2407,15 @@ class RealtimeDemoArranger:
         with self._lock:
             self._ending_requested = True
 
+    def request_fill(self, variation: int) -> None:
+        """Queue one of the selected style's two next-bar fill-ins."""
+
+        if variation not in (1, 2):
+            raise ValueError("fill variation must be 1 or 2")
+        self._raise_worker_error()
+        with self._lock:
+            self._fill_requested = variation
+
     def stop_playback(self) -> None:
         """Stop accompaniment while keeping the audio worker available."""
 
@@ -2218,6 +2447,15 @@ class RealtimeDemoArranger:
                 return 0
             renderer = self._renderer
         return renderer.position_ticks
+
+    @property
+    def fill_variation(self) -> int | None:
+        """Return the pending worker request or renderer fill state."""
+
+        with self._lock:
+            pending = self._fill_requested
+            renderer = self._renderer
+        return pending if pending is not None else renderer.fill_variation
 
     @property
     def style_id(self) -> str:
@@ -2284,6 +2522,9 @@ class RealtimeDemoArranger:
                     if self._ending_requested:
                         self._renderer.request_ending()
                         self._ending_requested = False
+                    if self._fill_requested is not None:
+                        self._renderer.request_fill(self._fill_requested)
+                        self._fill_requested = None
                     if self._stop_playback_requested:
                         self._renderer.stop()
                         self._stop_playback_requested = False

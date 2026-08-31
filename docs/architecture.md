@@ -15,11 +15,15 @@ FR-4X USB MIDI -> raw MIDI service -> browser accordion/control surface
                        |      ^
                        |      +------- simulator MIDI
                        |
-                       +-> reviewed input roles -> bass/chord pulse fusion
-                                                   -> harmony/tempo/sync state
+                       +-> reviewed input roles -> bass + melody prediction
+                                               +-> chord-button confirmation
+                                                   -> harmony state
+                                               +-> bass/chord pulse fusion
+                                                   -> tempo/sync state
                                                    |
                                                    +-> style event renderer
-                                                       -> native FluidSynth + SoundFont
+                                                       -> sfizz open-sample genre rack (built-ins)
+                                                       -> native FluidSynth + SoundFont (custom/fallback)
                                                           (procedural PCM fallback)
                                                        -> selected host PCM output
                                                        -> mixer analog input
@@ -48,10 +52,10 @@ are separate boundaries. The audio worker retains its own transport and
 renders bounded stereo buffers; it does not depend on browser timing. Stop,
 output failure, output change, and shutdown close the owned PCM stream.
 
-Start, stop, intro, ending, style, sync, and panic controls update the web
-arranger through an HTTP command boundary. Displays observe status
+Start, stop, intro, ending, two quantized Fill Ins, style, sync, and panic
+controls update the web arranger through an HTTP command boundary. Displays observe status
 but do not own the playback lifetime, so restarting a UI does not interrupt
-accompaniment. Fill and a general style-file engine remain pending.
+accompaniment. A general style-file engine remains pending.
 
 ## Timing contract
 
@@ -62,20 +66,28 @@ new continuous epoch/position segment.
 
 ## Current implementation boundary
 
-The web service renders fourteen proof-of-concept styles as stereo PCM. The Docker
-runtime uses the package-provided TimGM6mb SoundFont through libfluidsynth;
-hardware-free development retains the deterministic procedural fallback. It is
+The web service renders fourteen proof-of-concept styles as stereo PCM. Every
+built-in uses independent sfizz synths loaded with a pinned, open genre profile.
+The accepted Classic Waltz retains its six-voice piano/upright/orchestral/brush
+rack. Other profiles choose recorded piano or archtop guitar, upright or
+fingered/picked electric bass, flute or violin, cello, and brushed or full live
+drums/percussion. The Docker runtime uses the package-provided MuseScore General
+HQ SoundFont through libfluidsynth for custom styles and fallback; TimGM6mb
+remains available for explicit legacy A/B renders.
+Hardware-free development retains the deterministic procedural fallback. It is
 disabled until the performer selects an exact currently discovered PipeWire
 sink or direct `plughw` route. A bounded C-major test verifies the same route
 before rehearsal; the selection is atomically persisted and restored only when
 that exact PCM identifier is still available. No ALSA card or device is a
 shared default.
 
-All styles use four-bar intros, varying four-bar main phrases, and four-bar
-endings. Bass roles, comping, fills, backing pulses, accents, articulations, and
+All styles use section-specific four-bar intros, varying four-bar main phrases,
+four-bar endings, and two next-measure one-bar Fill Ins. Bass roles, comping,
+melodic fills, backing pulses, accents, articulations, and
 timekeeper patterns are independently declared instead of being generically
-layered onto every genre. Their default sampled palette uses acoustic guitar,
-piano, flute, and General MIDI drums without a string preset. Eight built-in
+layered onto every genre. Each sampled profile records its essential roles and
+uses an explicit piano/guitar, bass, melodic, backing, and percussion balance;
+Tango makes piano a prominent essential role. Eight built-in
 grooves adapt CC BY 4.0 human drum performances; their provenance and
 transformations are recorded in `docs/style-library-sources.md`. Custom styles
 persist a validated General MIDI palette, per-role mix/register/note gate,
@@ -87,15 +99,25 @@ audio boundary, never a browser synthesizer. It is allowed only while the live
 transport is stopped and an exact audio output is configured. Stop, timeout,
 modal cleanup, persistence operations, and normal transport commands restore
 the selected style, tempo, and harmony.
-The web service fuses deduplicated attacks from the saved bass and
-chord channels, then normalizes their movement against the selected style's
-rhythmic spacing. Bass-note changes update the accompaniment inversion
-immediately; new chord-note clusters are isolated from notes still held from
-the preceding chord. Optional left-hand sync starts and stops from the same
-activity stream. It is still a small hard-coded arranger rather than the future
-validated style-v1 loader. The custom-style document is deliberately a small
-editable overlay rather than a MIDI phrase authoring format, and its musical
-sophistication is not claimed to match a commercial hardware arranger.
+The web service fuses deduplicated attacks from the saved bass and chord
+channels, then normalizes their movement against the selected style's rhythmic
+spacing for tempo and sync. A separate causal harmony predictor treats a bass
+onset as evidence rather than a literal inversion: it ranks continuation of the
+last confirmed chord against chords rooted on the new bass using metrical
+position, circle-of-fifths movement, active melody compatibility, and a short
+recent-melody window. The provisional chord reaches the renderer immediately.
+A chord-button cluster remains authoritative and confirms or corrects the
+prediction after its bounded coalescing delay.
+
+This predictor is a deterministic, replaceable first layer rather than a
+trained model. It has no external inference runtime and evaluates only five
+bounded candidates. Training or calibrating a statistical transition model
+requires representative performer recordings with bass, treble, chord-button,
+meter, and confirmed-harmony timing. It is still a small hard-coded arranger
+rather than the future validated style-v1 loader. The custom-style document is
+deliberately a small editable overlay rather than a MIDI phrase authoring
+format, and its musical sophistication is not claimed to match a commercial
+hardware arranger.
 
 The CLI `keyboard --play` harness still writes to the default `aplay` route;
 the web service differs by requiring an explicit route. Automated tests do not

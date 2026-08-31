@@ -32,6 +32,7 @@ from ostinato.style_designer import (
     CustomStyleStore,
     default_custom_style_payload,
 )
+from ostinato.style_timeline import built_in_style_timeline, custom_style_timeline
 
 STATIC_DIRECTORY = Path(__file__).with_name("web_static")
 MidiNote = Annotated[int, Field(ge=0, le=127)]
@@ -137,6 +138,7 @@ class ArrangerCommandPayload(BaseModel):
         "stop",
         "intro",
         "ending",
+        "fill",
         "sync",
         "tempo_mode",
         "tempo",
@@ -343,6 +345,7 @@ def create_app(
                     "tempo_bpm": style.default_tempo_bpm,
                     "beats_per_bar": style.beats_per_bar,
                     "provenance": style.provenance,
+                    "timeline": built_in_style_timeline(style.id),
                 }
                 for style in DEMO_STYLES.values()
             ],
@@ -363,6 +366,20 @@ def create_app(
             return style_designer_catalog()
         except CustomStyleError as error:
             raise HTTPException(status_code=500, detail=str(error)) from error
+
+    @app.get("/api/styles/{identifier}/timeline")
+    async def style_timeline(identifier: str) -> dict[str, object]:
+        if identifier in DEMO_STYLES:
+            return built_in_style_timeline(identifier)
+        try:
+            style = next(
+                (item for item in custom_styles.load() if item.id == identifier), None
+            )
+        except CustomStyleError as error:
+            raise HTTPException(status_code=500, detail=str(error)) from error
+        if style is None:
+            raise HTTPException(status_code=404, detail="arranger style does not exist")
+        return custom_style_timeline(style)
 
     @app.post("/api/styles/preview")
     async def preview_custom_style(payload: StylePreviewPayload) -> dict[str, object]:

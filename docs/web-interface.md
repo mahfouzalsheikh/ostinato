@@ -69,11 +69,11 @@ Fourteen built-in arrangements are available. The first six are original
 Ostinato patterns:
 
 - **Modern Tango** — 4/4 at 120 BPM, with a dramatic 3+3+2 foundation,
-  changing bass movement, syncopated piano/flute voicings, acoustic guitar, and a
-  fourth-bar percussion fill;
+  prominent sampled piano, upright bass, violin/cello color, live percussion,
+  and a fourth-bar rhythmic lift;
 - **Classic Tango** — 4/4 at 120 BPM, alternating traditional marcato in four,
-  marcato in two, and sincopa gestures across acoustic guitar, piano,
-  flute, and short acoustic-guitar attacks without a generic drum kit;
+  marcato in two, and sincopa gestures across prominent sampled piano, upright
+  bass, violin, and cello without a generic drum kit;
 - **Classic Waltz** — 3/4 at 96 BPM, with true bass-on-one and chordal
   oom-pah-pah responses, rising inversions, orchestral dynamics, and a turn
   into the fourth bar;
@@ -81,9 +81,10 @@ Ostinato patterns:
   and three, independent two-bar syncopated comping, cross-stick accents, and
   a restrained straight-eighth timekeeper;
 - **Swing Foxtrot** — 4/4 at 132 BPM, with four-beat walking bass lines,
-  offbeat chord stabs, a swung ride-like pulse, and a compact turnaround;
+  offbeat piano stabs, trumpet answers, a swung ride-like pulse, and a compact
+  turnaround;
 - **Alpine Polka** — 2/4 at 124 BPM, with alternating root/fifth bass,
-  offbeat chords, bright flute voicing, and a lively fourth-bar fill.
+  offbeat chords, bright clarinet answers, and a lively fourth-bar fill.
 
 An attributed human-groove pack adds:
 
@@ -100,7 +101,7 @@ An attributed human-groove pack adds:
 - **Brazilian Samba** — 4/4 at 110 BPM, with layered syncopation and bright
   percussion;
 - **New Orleans Cha-Cha** — 4/4 at 124 BPM, with tumbao-shaped bass, claves,
-  crisp guitar, and flute answers;
+  crisp piano, and trumpet answers;
 - **Blues Shuffle** — 4/4 at 112 BPM, with triplet bass movement, shuffle
   comping, and responsive fills.
 
@@ -117,8 +118,9 @@ fingered/picked/fretless bass guitar, double bass and orchestral contrabass,
 solo and ensemble strings, pizzicato/tremolo strings, harp, and woodwinds.
 General MIDI has no dedicated mandolin program, so **Mandolin-style pluck** is
 explicitly implemented with the steel acoustic-guitar sample, one octave up
-and shortened. The fourteen built-in styles remain string-free by default; strings
-are now an intentional custom choice.
+and shortened. Custom styles choose strings intentionally; built-in Tango,
+Waltz, and Country profiles use recorded strings as part of their authored
+orchestration.
 
 Saved styles appear in the main selector with a **Custom** label and can be
 reopened, updated, or deleted. They are stored atomically in
@@ -146,17 +148,37 @@ for 3/4, and four for 4/4), highlights beat one in amber, and interpolates
 between refreshed integer-tick transport samples so the display does not jump
 at the API polling interval.
 
-Each style has a varying four-bar main phrase, its own staged four-bar intro,
-and a four-bar ending with a final cadence. Instrument layers have independent
-stereo placement and bar-to-bar dynamics. The ending enters at the next bar
+The **Orchestra map** below it is derived from the same arrangement data that
+drives audio. Five lanes show bass, chord rhythm, melodic answers, backing
+texture, and drums/percussion. Event width shows note length, height shows the
+relative accent, the lane label shows instrument and level, and each measure's
+small gradient meter shows the phrase-level dynamic. During playback, a shared
+interpolated playhead moves across all lanes in real time.
+
+The style designer shows the same timeline model. Instrument, level, gate,
+drum enable, template, and phrase-length edits redraw it immediately; an active
+unsaved preview also drives its playhead. This makes the saved configuration
+and the live performance view directly comparable.
+
+Each style has a varying four-bar main phrase, its own four-bar intro material,
+and a four-bar ending with a final cadence. Tango's intro adds an expressive
+piano/string statement, syncopated build, and lively launch. Instrument layers
+have independent stereo placement and bar-to-bar dynamics. Each of the two
+Fill Ins occupies the next complete bar: variation 1 is a rhythmic lift and
+variation 2 is a bass/melodic turnaround. The ending enters at the next bar
 and stops after its final bar. Stop playback before changing style. These are
 original hard-coded arrangements, not style-v1 files or proprietary imports.
-In Docker, their parts are rendered with sampled General MIDI instruments from
-the package-provided TimGM6mb SoundFont through native FluidSynth. The older
-procedural PCM renderer remains a fallback when no SoundFont is configured.
-The genre patterns are original, source-informed arrangements; provenance and
-the specific rhythmic principles are recorded in
-`docs/evidence/w16-source-informed-styles.md`.
+In Docker, every built-in is rendered by a genre-profiled sfizz rack with open
+multi-sampled piano or guitar, upright or electric bass, orchestral voices, and
+brushed or full live drums/percussion. Classic Waltz retains the exact rack
+accepted in its listening test. Custom styles use their editable sampled
+General MIDI instruments from the package-provided MuseScore General HQ
+SoundFont through native FluidSynth.
+TimGM6mb remains available for matched legacy A/B renders, and the older
+procedural PCM renderer remains a fallback when no sampled engine is configured.
+The genre patterns are source-informed arrangements; provenance, exact
+performance references, and redistribution terms are recorded in
+`docs/style-library-sources.md`.
 
 The controls and computer-key equivalents are:
 
@@ -166,6 +188,8 @@ The controls and computer-key equivalents are:
 | Start | `Enter` | Start the main section from its first bar |
 | Stop | `Space` | Stop accompaniment immediately |
 | Ending | `E` | Arm the ending for the next bar |
+| Fill In 1 | `1` | Queue a one-bar rhythmic lift for the next bar |
+| Fill In 2 | `2` | Queue a one-bar bass/melodic turnaround for the next bar |
 | Left-hand sync | `S` | Toggle automatic start and inactivity stop |
 
 Keyboard shortcuts are ignored while a form control or any setup dialog has
@@ -190,9 +214,20 @@ keeping the current tempo as the interpretation reference.
 Chord clusters settle six milliseconds after their first note, and the
 backend checks due clusters every five milliseconds. Each new attack is
 classified from its own note-on cluster, so lingering note-offs from the prior
-chord do not delay or corrupt the next harmony. A new bass note immediately
-updates the accompaniment bass voice; when it differs from the chord root the
-harmony readout uses slash notation such as `C/G`.
+chord do not delay or corrupt the next harmony. The chord button is the
+authoritative harmony, but the arranger no longer waits silently for it. A bass
+onset first produces a provisional chord from the last confirmed chord,
+metrical position, circle-of-fifths root motion, currently sounding treble
+notes, and a short recent-melody window. The prediction changes the renderer on
+the next audio chunk; the chord button confirms or corrects it when it arrives.
+
+For example, after D minor, an A bass within the measure is treated as likely
+alternating bass and keeps D minor. The same A bass at the next downbeat predicts
+A major by default; a sounding G can refine that prediction to A7, while a
+sounding F can favor continuation of D minor. These are provisional choices,
+not claims that an A bass uniquely determines harmony. Arranger status exposes
+whether the current result came from `bass + melody prediction` or the
+`chord button`, together with prediction confidence.
 
 Left-hand sync starts on detected bass or chord activity. It stops after two
 complete bars without another left-hand note-on, using the selected style's

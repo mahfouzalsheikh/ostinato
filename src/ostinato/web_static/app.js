@@ -21,6 +21,8 @@ const styleDesignerForm = $("#style-designer-form");
 const designerStyleSelect = $("#designer-style-select");
 const beatLights = $("#arranger-beat-lights");
 const beatLabel = $("#arranger-beat-label");
+const liveStyleTimeline = $("#arranger-style-timeline");
+const designerStyleTimeline = $("#designer-style-timeline");
 
 const MAX_EVENTS = 60;
 const SIMULATOR_VELOCITY = 96;
@@ -65,6 +67,8 @@ let styleDesignerCatalog = null;
 let designerDeleteArmed = false;
 let designerPreviewing = false;
 let designerPreviewRestartTimer = null;
+let liveTimelineStyleId = null;
+const styleTimelineCache = new Map();
 
 const DESIGNER_PREVIEW_RESTART_DELAY_MS = 180;
 const DESIGNER_NON_AUDIO_FIELDS = new Set([
@@ -209,8 +213,14 @@ function renderArrangerStatus(status) {
   $("#arranger-intro").disabled = !status.output_configured;
   $("#arranger-stop").disabled = !status.running;
   $("#arranger-ending").disabled = !status.running;
+  const fillAvailable = status.running && status.section === "main";
+  $("#arranger-fill-1").disabled = !fillAvailable;
+  $("#arranger-fill-2").disabled = !fillAvailable;
+  $("#arranger-fill-1").setAttribute("aria-pressed", String(status.fill_variation === 1));
+  $("#arranger-fill-2").setAttribute("aria-pressed", String(status.fill_variation === 2));
   $("#arranger-sync").setAttribute("aria-pressed", String(status.sync_enabled));
   renderBeatIndicator(status, 0);
+  ensureLiveStyleTimeline(status.style);
   if (styleDesignerDialog.open) renderDesignerPreviewState(status);
 
   if (status.error) {
@@ -227,6 +237,98 @@ function renderArrangerStatus(status) {
     );
   } else {
     setArrangerMessage("Bass tempo is style-normalized. Switch to Fixed if you do not want strokes to change it.");
+  }
+}
+
+function renderStyleTimeline(root, timeline) {
+  root.replaceChildren();
+  root.dataset.totalBeats = String(timeline.total_beats);
+  root.dataset.styleId = timeline.style_id;
+
+  const ruler = document.createElement("div");
+  ruler.className = "timeline-ruler";
+  const rulerLabel = document.createElement("span");
+  rulerLabel.textContent = "Role / instrument";
+  const measures = document.createElement("div");
+  measures.className = "timeline-measures";
+  measures.style.setProperty("--phrase-bars", timeline.phrase_bars);
+  for (let bar = 0; bar < timeline.phrase_bars; bar += 1) {
+    const measure = document.createElement("span");
+    measure.textContent = `M${bar + 1}`;
+    measure.title = `Measure ${bar + 1} · ${timeline.bar_dynamics[bar]}% phrase energy`;
+    const energy = document.createElement("i");
+    energy.style.setProperty("--bar-energy", `${timeline.bar_dynamics[bar]}%`);
+    measure.append(energy);
+    measures.append(measure);
+  }
+  ruler.append(rulerLabel, measures);
+  root.append(ruler);
+
+  for (const lane of timeline.lanes) {
+    const row = document.createElement("div");
+    row.className = `timeline-lane lane-${lane.id}`;
+    const label = document.createElement("div");
+    label.className = "timeline-lane-label";
+    const role = document.createElement("strong");
+    role.textContent = lane.label;
+    const instrument = document.createElement("span");
+    instrument.textContent = lane.instrument;
+    const level = document.createElement("small");
+    level.textContent = `${lane.level}%`;
+    label.append(role, instrument, level);
+
+    const track = document.createElement("div");
+    track.className = "timeline-track";
+    track.style.setProperty("--phrase-bars", timeline.phrase_bars);
+    track.style.setProperty("--lane-opacity", String(0.18 + (lane.level * 0.007)));
+    track.style.setProperty("--lane-soft-opacity", String(0.1 + (lane.level * 0.005)));
+    for (const event of lane.events) {
+      const block = document.createElement("i");
+      block.className = `timeline-event event-${event.kind}`;
+      block.style.left = `${100 * event.start / timeline.total_beats}%`;
+      block.style.width = `${Math.max(0.55, 100 * event.duration / timeline.total_beats)}%`;
+      block.style.height = `${Math.max(18, Math.min(100, event.intensity))}%`;
+      block.title = `${lane.label}: beat ${event.start + 1} · ${event.kind}`;
+      track.append(block);
+    }
+    const playhead = document.createElement("b");
+    playhead.className = "timeline-playhead";
+    playhead.setAttribute("aria-hidden", "true");
+    track.append(playhead);
+    row.append(label, track);
+    root.append(row);
+  }
+}
+
+async function ensureLiveStyleTimeline(styleId) {
+  if (!styleId || liveTimelineStyleId === styleId) return;
+  liveTimelineStyleId = styleId;
+  try {
+    let timeline = styleTimelineCache.get(styleId);
+    if (!timeline) {
+      timeline = await api(`/api/styles/${encodeURIComponent(styleId)}/timeline`);
+      styleTimelineCache.set(styleId, timeline);
+    }
+    if (liveTimelineStyleId !== styleId) return;
+    renderStyleTimeline(liveStyleTimeline, timeline);
+    $("#live-timeline-state").textContent = `${timeline.phrase_bars} measures · live playhead`;
+  } catch (error) {
+    if (liveTimelineStyleId !== styleId) return;
+    liveTimelineStyleId = null;
+    $("#live-timeline-state").textContent = `Timeline unavailable: ${error.message}`;
+  }
+}
+
+function updateTimelinePlayhead(root, status, elapsedMilliseconds) {
+  const totalBeats = Number(root.dataset.totalBeats);
+  if (!totalBeats || !status) return;
+  const running = status.running && status.section !== "stopped";
+  const projectedTicks = status.position_ticks
+    + (running ? elapsedMilliseconds * status.tempo_bpm * 96 / 60000 : 0);
+  const progress = running ? ((projectedTicks / 96) % totalBeats) / totalBeats : 0;
+  root.classList.toggle("playing", running);
+  for (const playhead of root.querySelectorAll(".timeline-playhead")) {
+    playhead.style.left = `${progress * 100}%`;
   }
 }
 
@@ -265,10 +367,15 @@ function renderBeatIndicator(status, elapsedMilliseconds) {
 
 function animateBeatIndicator(nowMilliseconds) {
   if (beatClock) {
+    const elapsed = nowMilliseconds - beatClock.sampledAtMilliseconds;
     renderBeatIndicator(
       beatClock.status,
-      nowMilliseconds - beatClock.sampledAtMilliseconds,
+      elapsed,
     );
+    updateTimelinePlayhead(liveStyleTimeline, beatClock.status, elapsed);
+    if (styleDesignerDialog.open && designerPreviewing) {
+      updateTimelinePlayhead(designerStyleTimeline, beatClock.status, elapsed);
+    }
   }
   requestAnimationFrame(animateBeatIndicator);
 }
@@ -438,6 +545,51 @@ function renderDesignerStyle(style, identifier = "") {
   $("#designer-delete").hidden = !editing;
   $("#designer-save").textContent = editing ? "Update style" : "Save new style";
   resetDesignerDelete();
+  renderDesignerTimeline();
+}
+
+function renderDesignerTimeline() {
+  const template = styleDesignerCatalog?.templates.find(
+    (item) => item.id === $("#designer-template").value,
+  );
+  if (!template?.timeline) return;
+  const timeline = cloneStyle(template.timeline);
+  const phraseBars = Number($("#designer-phrase-bars").value);
+  timeline.style_id = "designer-preview";
+  timeline.name = $("#designer-name").value.trim() || "Unsaved style";
+  timeline.phrase_bars = phraseBars;
+  timeline.total_beats = phraseBars * timeline.beats_per_bar;
+  timeline.bar_dynamics = timeline.bar_dynamics.slice(0, phraseBars);
+  for (const lane of timeline.lanes) {
+    let level;
+    let instrumentName;
+    let gate = 1;
+    if (lane.id === "drums") {
+      const enabled = $("#designer-drums-enabled").checked;
+      level = enabled ? Number($("#designer-drums-volume").value) : 0;
+      instrumentName = enabled ? "Studio drum kit" : "Off";
+    } else {
+      const card = document.querySelector(`.designer-layer[data-layer="${lane.id}"]`);
+      const instrumentId = card.querySelector('[data-field="instrument"]').value;
+      const instrument = styleDesignerCatalog.instruments.find(
+        (item) => item.id === instrumentId,
+      );
+      level = instrumentId === "none"
+        ? 0
+        : Number(card.querySelector('[data-field="volume"]').value);
+      instrumentName = instrument?.name ?? instrumentId;
+      gate = Number(card.querySelector('[data-field="gate"]').value) / 100;
+    }
+    lane.level = level;
+    lane.instrument = instrumentName;
+    lane.events = lane.events
+      .filter((event) => event.start < timeline.total_beats)
+      .map((event) => ({ ...event, duration: event.duration * gate }));
+  }
+  renderStyleTimeline(designerStyleTimeline, timeline);
+  if (designerPreviewing && beatClock) {
+    updateTimelinePlayhead(designerStyleTimeline, beatClock.status, 0);
+  }
 }
 
 function newDesignerStyle() {
@@ -508,6 +660,8 @@ async function saveDesignerStyle(event) {
     styleDesignerCatalog = await api("/api/styles");
     populateDesignerOptions(styleDesignerCatalog);
     renderDesignerStyle(saved, saved.id);
+    styleTimelineCache.delete(saved.id);
+    liveTimelineStyleId = null;
     await loadArrangerStatus();
     if (arrangerStatus?.style !== saved.id) await arrangerCommand("style", saved.id);
     setStyleDesignerMessage(`Saved “${saved.name}”. It is now the selected arranger style.`);
@@ -528,6 +682,8 @@ async function deleteDesignerStyle() {
   try {
     await stopDesignerPreview(true);
     await api(`/api/styles/${style.id}`, { method: "DELETE" });
+    styleTimelineCache.delete(style.id);
+    if (liveTimelineStyleId === style.id) liveTimelineStyleId = null;
     styleDesignerCatalog = await api("/api/styles");
     populateDesignerOptions(styleDesignerCatalog);
     newDesignerStyle();
@@ -1033,9 +1189,11 @@ $("#designer-drums-volume").addEventListener("input", ({ target }) => {
   $("#designer-drums-volume-value").textContent = target.value;
 });
 styleDesignerForm.addEventListener("change", ({ target }) => {
+  renderDesignerTimeline();
   scheduleDesignerPreviewRestart(target, 40);
 });
 styleDesignerForm.addEventListener("input", ({ target }) => {
+  renderDesignerTimeline();
   scheduleDesignerPreviewRestart(target);
 });
 $("#arranger-tempo-mode").addEventListener("click", () => {
@@ -1051,6 +1209,8 @@ $("#arranger-intro").addEventListener("click", () => arrangerCommand("intro"));
 $("#arranger-start").addEventListener("click", () => arrangerCommand("start"));
 $("#arranger-stop").addEventListener("click", () => arrangerCommand("stop"));
 $("#arranger-ending").addEventListener("click", () => arrangerCommand("ending"));
+$("#arranger-fill-1").addEventListener("click", () => arrangerCommand("fill", 1));
+$("#arranger-fill-2").addEventListener("click", () => arrangerCommand("fill", 2));
 $("#arranger-sync").addEventListener("click", () => {
   arrangerCommand("sync", !arrangerStatus?.sync_enabled);
 });
@@ -1067,6 +1227,8 @@ document.addEventListener("keydown", (event) => {
     Enter: ["start", null],
     Space: ["stop", null],
     KeyE: ["ending", null],
+    Digit1: ["fill", 1],
+    Digit2: ["fill", 2],
     KeyS: ["sync", !arrangerStatus?.sync_enabled],
   };
   const command = commands[event.code];

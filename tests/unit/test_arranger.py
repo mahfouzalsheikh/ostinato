@@ -26,6 +26,8 @@ class FakeArrangerAudio:
         self.chord: ChordState | None = None
         self.closed = False
         self.ending_requests = 0
+        self.fill_requests: list[int] = []
+        self.fill_variation: int | None = None
         self.device: str | None = None
         self.error: str | None = None
         self.position_ticks: int | None = 0
@@ -56,6 +58,10 @@ class FakeArrangerAudio:
     def request_ending(self) -> None:
         self.ending_requests += 1
         self._section = DemoSection.ENDING
+
+    def request_fill(self, variation: int) -> None:
+        self.fill_requests.append(variation)
+        self.fill_variation = variation
 
     def stop(self) -> None:
         self._section = DemoSection.STOPPED
@@ -361,6 +367,20 @@ class LiveArrangerServiceTests(unittest.TestCase):
         stopped = self.arranger.advance(4_000_000_000)
         self.assertFalse(stopped["running"])
         self.assertEqual(stopped["section"], "stopped")
+
+    def test_two_fill_variations_are_available_only_during_main_playback(self) -> None:
+        with self.assertRaisesRegex(ArrangerError, "main style"):
+            self.arranger.command("fill", 1)
+        self.arranger.command("start")
+
+        first = self.arranger.command("fill", 1)
+        second = self.arranger.command("fill", 2)
+
+        self.assertEqual(self.audio.fill_requests, [1, 2])
+        self.assertEqual(first["fill_variation"], 1)
+        self.assertEqual(second["fill_variation"], 2)
+        with self.assertRaisesRegex(ArrangerError, "variation 1 or 2"):
+            self.arranger.command("fill", 3)
 
     def test_style_change_requires_stop_and_applies_style_default_tempo(self) -> None:
         self.arranger.command("start")

@@ -6,8 +6,8 @@
     <meta name="theme-color" content="#080b0d" />
     <title>Ostinato Live Surface</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23080b0d'/%3E%3Ctext x='32' y='44' fill='%2365f6d1' font-size='40' text-anchor='middle'%3EO%3C/text%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="/assets/styles.css?v=17" />
-    <script type="module" src="/assets/app.js?v=20"></script>
+    <link rel="stylesheet" href="/assets/styles.css?v=18" />
+    <script type="module" src="/assets/app.js?v=21"></script>
   </head>
   <body>
     <header class="topbar">
@@ -126,6 +126,16 @@
           </div>
           <ol id="arranger-beat-lights" aria-label="4/4 bar position, stopped"></ol>
         </div>
+        <section class="style-timeline-card live-style-timeline" aria-labelledby="live-timeline-title">
+          <header class="style-timeline-heading">
+            <div>
+              <span>Orchestra map</span>
+              <strong id="live-timeline-title">Style timeline</strong>
+            </div>
+            <small id="live-timeline-state">Loading arrangement…</small>
+          </header>
+          <div id="arranger-style-timeline" class="style-timeline" aria-live="polite"></div>
+        </section>
         <div class="arranger-controls" aria-label="Arranger transport controls">
           <button id="arranger-intro" class="arranger-button" type="button">
             <span>Intro</span><kbd>I</kbd>
@@ -138,6 +148,12 @@
           </button>
           <button id="arranger-ending" class="arranger-button" type="button">
             <span>Ending</span><kbd>E</kbd>
+          </button>
+          <button id="arranger-fill-1" class="arranger-button" type="button" aria-pressed="false">
+            <span>Fill In 1</span><kbd>1</kbd>
+          </button>
+          <button id="arranger-fill-2" class="arranger-button" type="button" aria-pressed="false">
+            <span>Fill In 2</span><kbd>2</kbd>
           </button>
           <button id="arranger-sync" class="arranger-button sync" type="button" aria-pressed="false">
             <span>Left-hand sync</span><kbd>S</kbd>
@@ -364,6 +380,17 @@
             <strong><output id="designer-tempo-value">120</output> BPM</strong>
           </label>
         </div>
+
+        <section class="style-timeline-card designer-style-timeline" aria-labelledby="designer-timeline-title">
+          <header class="style-timeline-heading">
+            <div>
+              <span>Phrase architecture</span>
+              <strong id="designer-timeline-title">Arrangement timeline</strong>
+            </div>
+            <small>Height = accent · tint = mix level</small>
+          </header>
+          <div id="designer-style-timeline" class="style-timeline"></div>
+        </section>
 
         <section class="designer-section" aria-labelledby="designer-ensemble-title">
           <div class="designer-section-heading">

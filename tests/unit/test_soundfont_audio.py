@@ -300,6 +300,19 @@ class SoundFontArrangementRendererTests(unittest.TestCase):
         renderer.render(1_600, chord())
         self.assertEqual(renderer.section, DemoSection.STOPPED)
 
+    def test_fill_is_queued_for_one_complete_next_bar(self) -> None:
+        renderer, engine = self.create_renderer(tempo_bpm=60, sample_rate=100)
+
+        renderer.request_fill(1)
+        renderer.render(400, chord())
+        notes_before_fill = len(engine.note_ons)
+        renderer.render(1, chord())
+
+        self.assertEqual(renderer.fill_variation, 1)
+        self.assertGreater(len(engine.note_ons), notes_before_fill)
+        renderer.render(399, chord())
+        self.assertIsNone(renderer.fill_variation)
+
     def test_close_releases_native_engine_once(self) -> None:
         renderer, engine = self.create_renderer()
 
