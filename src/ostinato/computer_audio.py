@@ -215,12 +215,35 @@ class DemoArrangementRenderer:
     _CHORD_DURATION_BEATS: ClassVar[float] = 0.30
     _REED_DURATION_BEATS: ClassVar[float] = 0.26
     _PAD_DURATION_BEATS: ClassVar[float | None] = None
+    _COMP_VOICE_CYCLE: ClassVar[tuple[int, ...]] = (3, 2, 3, 3)
+    _COMP_OPEN_CYCLE: ClassVar[tuple[bool, ...]] = (False, False, True, False)
 
     _INTERVALS: ClassVar[dict[ChordQuality, tuple[int, ...]]] = {
         ChordQuality.MAJOR: (0, 4, 7),
         ChordQuality.MINOR: (0, 3, 7),
         ChordQuality.DOMINANT_SEVENTH: (0, 4, 7, 10),
         ChordQuality.DIMINISHED: (0, 3, 6),
+    }
+    # Chord-tone degrees, rather than fixed MIDI intervals, keep the improvised
+    # feature line valid when the performer changes chord quality.  Each style
+    # has a restrained and an animated contour; section context selects and
+    # offsets them so intros, endings, and the two fills are related without
+    # being identical.
+    _SOLO_CONTOURS: ClassVar[dict[str, tuple[tuple[int, ...], tuple[int, ...]]]] = {
+        "modern_tango": ((0, 2, 1, 3, 2, 4, 3, 1), (2, 4, 3, 5, 2, 3, 1, 0)),
+        "classic_tango": ((0, 1, 2, 1, 3, 2, 1, 0), (2, 3, 4, 2, 3, 1, 2, 0)),
+        "classic_waltz": ((0, 1, 2, 3, 2, 1), (2, 4, 3, 1, 2, 0)),
+        "bossa_nova": ((1, 2, 0, 3, 2, 1), (2, 3, 1, 4, 3, 0)),
+        "swing_foxtrot": ((0, 2, 1, 3, 4, 2), (2, 4, 3, 5, 1, 0)),
+        "alpine_polka": ((0, 2, 1, 2, 3, 1), (2, 3, 4, 2, 1, 0)),
+        "motown_soul": ((0, 1, 2, 4, 3, 2), (2, 4, 3, 1, 2, 0)),
+        "funk_pocket": ((0, 2, 1, 3, 1, 2), (2, 4, 2, 5, 3, 0)),
+        "soft_pop": ((0, 1, 2, 3, 4, 2), (2, 3, 4, 5, 3, 0)),
+        "country_two_step": ((0, 2, 1, 3, 2, 1), (2, 4, 3, 2, 1, 0)),
+        "reggae_one_drop": ((0, 2, 1, 3, 1, 2), (2, 3, 1, 4, 2, 0)),
+        "brazilian_samba": ((0, 1, 3, 2, 4, 3), (2, 4, 1, 5, 3, 0)),
+        "new_orleans_chacha": ((0, 2, 1, 4, 3, 2), (2, 3, 5, 4, 1, 0)),
+        "blues_shuffle": ((0, 1, 2, 3, 2, 1), (2, 4, 3, 5, 2, 0)),
     }
     _BASS_ONSETS: ClassVar[tuple[float, ...]] = (0.0, 1.5, 3.0)
     _BASS_INTERVALS: ClassVar[tuple[int, ...]] = (0, 7, 12)
@@ -506,6 +529,7 @@ class DemoArrangementRenderer:
             chord=chord,
             bar_phase=bar_phase,
             seconds_per_beat=seconds_per_beat,
+            bar_index=bar_index,
             groove=groove,
         )
         final_ending_bar = (
@@ -516,6 +540,9 @@ class DemoArrangementRenderer:
             chord=chord,
             bar_phase=bar_phase,
             seconds_per_beat=seconds_per_beat,
+            section=section,
+            bar_index=bar_index,
+            fill_variation=fill_variation,
             final_ending_bar=final_ending_bar,
             groove=groove,
         )
@@ -586,18 +613,19 @@ class DemoArrangementRenderer:
         chord: ChordState,
         bar_phase: float,
         seconds_per_beat: float,
+        bar_index: int,
         groove: GrooveBar,
     ) -> float:
         pulse, elapsed_beats = self._pulse_at(bar_phase, groove.chord_onsets)
         elapsed_seconds = elapsed_beats * seconds_per_beat
         attack = min(1.0, elapsed_seconds * 110)
         envelope = attack * math.exp(-elapsed_seconds * 8.5)
-        intervals = self._INTERVALS[chord.quality]
         rotation = pulse + groove.voicing_rotation
-        selected = tuple(
-            intervals[(rotation + voice) % len(intervals)]
-            + (12 if rotation + voice >= len(intervals) else 0)
-            for voice in range(min(3, len(intervals)))
+        selected = self._comp_voicing(
+            chord.quality,
+            rotation,
+            bar_index,
+            pulse,
         )
         piano = 0.0
         for interval in selected:
@@ -617,12 +645,20 @@ class DemoArrangementRenderer:
         chord: ChordState,
         bar_phase: float,
         seconds_per_beat: float,
+        section: DemoSection,
+        bar_index: int,
+        fill_variation: int | None,
         final_ending_bar: bool,
         groove: GrooveBar,
     ) -> float:
+        solo_section = (
+            section in (DemoSection.INTRO, DemoSection.ENDING)
+            or fill_variation is not None
+        )
+        feature_line = solo_section or groove.reed_onsets is not None
         onsets = (
-            self._FINAL_CHORD_ONSETS
-            if final_ending_bar
+            self._solo_onsets(section, groove, final_ending_bar, fill_variation)
+            if solo_section
             else (
                 groove.reed_onsets
                 if groove.reed_onsets is not None
@@ -631,7 +667,7 @@ class DemoArrangementRenderer:
         )
         if not onsets:
             return 0.0
-        _, elapsed_beats = self._pulse_at(bar_phase, onsets)
+        pulse, elapsed_beats = self._pulse_at(bar_phase, onsets)
         elapsed_seconds = elapsed_beats * seconds_per_beat
         attack = min(1.0, elapsed_seconds * 100)
         final_accent = final_ending_bar and bar_phase >= self.BEATS_PER_BAR - 1.0
@@ -639,7 +675,19 @@ class DemoArrangementRenderer:
         envelope = attack * math.exp(-elapsed_seconds * decay)
         reed = 0.0
         intervals = self._INTERVALS[chord.quality]
-        for interval in intervals:
+        sounding_intervals = intervals
+        if feature_line:
+            sounding_intervals = (
+                self._solo_interval(
+                    chord.quality,
+                    pulse,
+                    section,
+                    bar_index,
+                    fill_variation,
+                    final_note=final_ending_bar and pulse == len(onsets) - 1,
+                ),
+            )
+        for interval in sounding_intervals:
             frequency = self._midi_frequency(
                 MIDDLE_C_NOTE + chord.root_pitch_class + interval
             )
@@ -648,7 +696,78 @@ class DemoArrangementRenderer:
                 + (0.30 * math.sin(math.tau * frequency * 2 * elapsed_seconds))
                 + (0.10 * math.sin(math.tau * frequency * 3 * elapsed_seconds))
             )
-        return 0.15 * envelope * reed / len(intervals)
+        return 0.15 * envelope * reed / len(sounding_intervals)
+
+    @classmethod
+    def _comp_voicing(
+        cls,
+        quality: ChordQuality,
+        rotation: int,
+        bar_index: int,
+        pulse: int,
+    ) -> tuple[int, ...]:
+        """Create changing shell, close, and open chord-tone voicings."""
+
+        chord_tones = cls._INTERVALS[quality]
+        cycle_index = (bar_index + pulse) % len(cls._COMP_VOICE_CYCLE)
+        voice_count = min(cls._COMP_VOICE_CYCLE[cycle_index], len(chord_tones))
+        selected = tuple(
+            chord_tones[(rotation + voice) % len(chord_tones)]
+            + (12 if rotation + voice >= len(chord_tones) else 0)
+            for voice in range(voice_count)
+        )
+        open_voicing = cls._COMP_OPEN_CYCLE[
+            (bar_index + pulse) % len(cls._COMP_OPEN_CYCLE)
+        ]
+        if open_voicing and len(selected) >= 3:
+            return selected[0], selected[2], selected[1] + 12
+        return selected
+
+    @classmethod
+    def _solo_onsets(
+        cls,
+        section: DemoSection,
+        groove: GrooveBar,
+        final_ending_bar: bool,
+        fill_variation: int | None,
+    ) -> tuple[float, ...]:
+        """Return a meter-safe feature rhythm for a section solo."""
+
+        if final_ending_bar:
+            return cls._FINAL_CHORD_ONSETS
+        reed_onsets = groove.reed_onsets or ()
+        if fill_variation is not None or len(reed_onsets) >= 2:
+            return reed_onsets
+        # Some main grooves intentionally omit a feature voice.  Their intro
+        # and ending still need a solo, so borrow sparse harmonic landmarks.
+        landmarks = groove.chord_onsets[::2] or groove.chord_onsets[:1]
+        return tuple(sorted(set((*reed_onsets, *landmarks))))
+
+    @classmethod
+    def _solo_interval(
+        cls,
+        quality: ChordQuality,
+        pulse: int,
+        section: DemoSection,
+        bar_index: int,
+        fill_variation: int | None,
+        *,
+        final_note: bool = False,
+    ) -> int:
+        """Choose one chord tone from the style's deterministic solo contour."""
+
+        if final_note:
+            return 12
+        contours = cls._SOLO_CONTOURS.get(
+            cls.STYLE_NAME, cls._SOLO_CONTOURS["modern_tango"]
+        )
+        variation = 1 if fill_variation == 2 or section is DemoSection.ENDING else 0
+        contour = contours[variation]
+        section_offset = 2 if section is DemoSection.ENDING else 0
+        degree = contour[(bar_index * 2 + pulse + section_offset) % len(contour)]
+        chord_tones = cls._INTERVALS[quality]
+        octave, chord_degree = divmod(degree, len(chord_tones))
+        return chord_tones[chord_degree] + (12 * octave)
 
     def _render_strings(
         self,
@@ -1046,6 +1165,8 @@ class ClassicTangoRenderer(DemoArrangementRenderer):
     _BASS_DURATION_BEATS = 0.54
     _CHORD_DURATION_BEATS = 0.27
     _REED_DURATION_BEATS = 0.32
+    _COMP_VOICE_CYCLE = (3, 2, 3, 2)
+    _COMP_OPEN_CYCLE = (False, True, False, True)
     _PAD_DURATION_BEATS = 0.28
     _GROOVE = (
         GrooveBar(
@@ -1151,6 +1272,8 @@ class ClassicWaltzRenderer(DemoArrangementRenderer):
     _BASS_DURATION_BEATS = 0.82
     _CHORD_DURATION_BEATS = 0.56
     _REED_DURATION_BEATS = 0.74
+    _COMP_VOICE_CYCLE = (3, 3, 2, 3)
+    _COMP_OPEN_CYCLE = (False, True, False, False)
     _GROOVE = (
         GrooveBar(
             (0.0,),
@@ -1257,6 +1380,8 @@ class BossaNovaRenderer(DemoArrangementRenderer):
     _BASS_DURATION_BEATS = 0.90
     _CHORD_DURATION_BEATS = 0.52
     _REED_DURATION_BEATS = 0.44
+    _COMP_VOICE_CYCLE = (3, 2, 3, 2)
+    _COMP_OPEN_CYCLE = (True, False, True, False)
     _GROOVE = (
         GrooveBar(
             (0.0, 2.0),
@@ -1358,6 +1483,8 @@ class SwingFoxtrotRenderer(DemoArrangementRenderer):
     _BASS_DURATION_BEATS = 0.86
     _CHORD_DURATION_BEATS = 0.24
     _REED_DURATION_BEATS = 0.48
+    _COMP_VOICE_CYCLE = (2, 3, 4, 2)
+    _COMP_OPEN_CYCLE = (False, True, False, True)
     _GROOVE = (
         GrooveBar(
             (0.0, 1.0, 2.0, 3.0),
@@ -1462,6 +1589,8 @@ class AlpinePolkaRenderer(DemoArrangementRenderer):
     _BASS_DURATION_BEATS = 0.36
     _CHORD_DURATION_BEATS = 0.28
     _REED_DURATION_BEATS = 0.24
+    _COMP_VOICE_CYCLE = (3, 2, 3, 3)
+    _COMP_OPEN_CYCLE = (False, True, False, False)
     _GROOVE = (
         GrooveBar(
             (0.0, 1.0),
@@ -1579,6 +1708,8 @@ class MotownSoulRenderer(HumanGrooveRenderer):
     _BASS_DURATION_BEATS = 0.62
     _CHORD_DURATION_BEATS = 0.30
     _REED_DURATION_BEATS = 0.36
+    _COMP_VOICE_CYCLE = (3, 2, 3, 2)
+    _COMP_OPEN_CYCLE = (False, True, False, True)
     _GROOVE = (
         GrooveBar(
             bass_onsets=(0.0, 1.5, 2.0, 3.5),
@@ -1677,6 +1808,8 @@ class FunkPocketRenderer(HumanGrooveRenderer):
     _BASS_DURATION_BEATS = 0.32
     _CHORD_DURATION_BEATS = 0.18
     _REED_DURATION_BEATS = 0.24
+    _COMP_VOICE_CYCLE = (2, 3, 2, 3)
+    _COMP_OPEN_CYCLE = (False, True, False, True)
     _GROOVE = (
         GrooveBar(
             (0.0, 0.75, 1.5, 2.5, 3.25),
@@ -1785,6 +1918,8 @@ class SoftPopRenderer(HumanGrooveRenderer):
     _CHORD_DURATION_BEATS = 0.82
     _REED_DURATION_BEATS = 0.72
     _PAD_DURATION_BEATS = 1.85
+    _COMP_VOICE_CYCLE = (3, 2, 3, 2)
+    _COMP_OPEN_CYCLE = (True, False, True, False)
     _GROOVE = (
         GrooveBar(
             (0.0, 2.0),
@@ -1883,6 +2018,8 @@ class CountryTwoStepRenderer(HumanGrooveRenderer):
     _BASS_DURATION_BEATS = 0.45
     _CHORD_DURATION_BEATS = 0.34
     _REED_DURATION_BEATS = 0.28
+    _COMP_VOICE_CYCLE = (2, 3, 2, 3)
+    _COMP_OPEN_CYCLE = (False, True, False, False)
     _GROOVE = tuple(
         GrooveBar(
             bass_onsets=(0.0, 1.0, 2.0, 3.0, *(() if bar < 3 else (3.5,))),
@@ -1913,6 +2050,42 @@ class CountryTwoStepRenderer(HumanGrooveRenderer):
         )
         for bar in range(4)
     )
+    _GROOVE = (
+        _GROOVE[0],
+        replace(
+            _GROOVE[1],
+            bass_onsets=(0.0, 1.0, 2.0, 3.0, 3.5),
+            bass_intervals=(0, 0, 0, 0, 0),
+            bass_roles=("root", "fifth", "octave", "fifth", "third"),
+            bass_accents=(1.04, 0.82, 0.94, 0.80, 0.62),
+            chord_onsets=(0.5, 1.5, 2.5, 3.25, 3.75),
+            chord_accents=(0.80, 0.70, 0.78, 0.62, 0.74),
+            kick_onsets=(0.0, 2.0, 3.5),
+            kick_accents=(0.96, 0.92, 0.62),
+            snare_onsets=(1.0, 3.0, 3.5),
+            snare_accents=(0.92, 0.96, 0.42),
+        ),
+        replace(
+            _GROOVE[2],
+            bass_onsets=(0.0, 0.5, 1.0, 2.0, 3.0),
+            bass_intervals=(0, 0, 0, 0, 0),
+            bass_roles=("root", "third", "fifth", "octave", "fifth"),
+            bass_accents=(1.06, 0.58, 0.82, 0.94, 0.80),
+            chord_onsets=(0.0, 1.5, 2.5, 3.5),
+            chord_accents=(0.68, 0.74, 0.80, 0.72),
+            kick_onsets=(0.0, 1.5, 2.0, 3.5),
+            kick_accents=(0.96, 0.58, 0.90, 0.66),
+        ),
+        replace(
+            _GROOVE[3],
+            chord_onsets=(0.5, 1.5, 2.5, 3.0, 3.5, 3.75),
+            chord_accents=(0.80, 0.70, 0.78, 0.58, 0.72, 0.84),
+            kick_onsets=(0.0, 1.5, 2.0, 3.0, 3.75),
+            kick_accents=(0.96, 0.58, 0.90, 0.68, 0.72),
+            snare_onsets=(0.5, 1.5, 2.5, 3.0, 3.5, 3.75),
+            snare_accents=(0.46, 0.90, 0.46, 0.62, 0.78, 0.52),
+        ),
+    )
     _MAIN_LEVELS = EnsembleLevels(0.94, 0.90, 0.42, 0.72, 0.54, 0.44)
 
 
@@ -1927,6 +2100,8 @@ class ReggaeOneDropRenderer(HumanGrooveRenderer):
     _BASS_DURATION_BEATS = 0.92
     _CHORD_DURATION_BEATS = 0.18
     _REED_DURATION_BEATS = 0.34
+    _COMP_VOICE_CYCLE = (3, 2, 3, 2)
+    _COMP_OPEN_CYCLE = (True, False, True, False)
     _GROOVE = tuple(
         GrooveBar(
             bass_onsets=(0.0, 1.5, 2.75, *((3.5,) if bar in (1, 3) else ())),
@@ -1956,6 +2131,40 @@ class ReggaeOneDropRenderer(HumanGrooveRenderer):
         )
         for bar in range(4)
     )
+    _GROOVE = (
+        _GROOVE[0],
+        replace(
+            _GROOVE[1],
+            bass_onsets=(0.0, 0.75, 1.5, 2.75, 3.5),
+            bass_intervals=(0, 0, 0, 0, 0),
+            bass_roles=("root", "third", "fifth", "octave", "fifth"),
+            bass_accents=(1.08, 0.58, 0.76, 0.88, 0.64),
+            kick_onsets=(2.0, 3.5),
+            kick_accents=(0.92, 0.34),
+        ),
+        replace(
+            _GROOVE[2],
+            bass_onsets=(0.0, 1.5, 2.5, 2.75),
+            bass_intervals=(0, 0, 0, 0),
+            bass_roles=("root", "fifth", "third", "octave"),
+            bass_accents=(1.10, 0.76, 0.58, 0.86),
+            chord_onsets=(0.5, 1.5, 2.5, 3.25, 3.5),
+            chord_accents=(0.78, 0.70, 0.80, 0.52, 0.70),
+        ),
+        replace(
+            _GROOVE[3],
+            bass_onsets=(0.0, 0.75, 1.5, 2.75, 3.5, 3.75),
+            bass_intervals=(0, 0, 0, 0, 0, 0),
+            bass_roles=("root", "third", "fifth", "octave", "fifth", "root"),
+            bass_accents=(1.08, 0.56, 0.76, 0.86, 0.62, 0.52),
+            chord_onsets=(0.5, 1.5, 2.5, 3.25, 3.5, 3.75),
+            chord_accents=(0.78, 0.70, 0.82, 0.48, 0.68, 0.54),
+            kick_onsets=(2.0, 3.5, 3.75),
+            kick_accents=(0.94, 0.34, 0.42),
+            snare_onsets=(2.0, 3.25, 3.5, 3.75),
+            snare_accents=(1.06, 0.34, 0.44, 0.54),
+        ),
+    )
     _MAIN_LEVELS = EnsembleLevels(1.0, 0.92, 0.34, 0.54, 0.72, 0.28)
 
 
@@ -1968,8 +2177,10 @@ class BrazilianSambaRenderer(HumanGrooveRenderer):
     DEFAULT_TEMPO_BPM = 110
     SYNCOPATION_GROUPS = (0.25, 0.5, 0.75, 1.0)
     _BASS_DURATION_BEATS = 0.38
-    _CHORD_DURATION_BEATS = 0.24
+    _CHORD_DURATION_BEATS = 0.34
     _REED_DURATION_BEATS = 0.30
+    _COMP_VOICE_CYCLE = (3, 2, 3, 3)
+    _COMP_OPEN_CYCLE = (False, True, False, True)
     _GROOVE = tuple(
         GrooveBar(
             bass_onsets=(0.0, 0.75, 1.0, 1.75, 2.0, 2.75, 3.0, 3.75),
@@ -2005,6 +2216,59 @@ class BrazilianSambaRenderer(HumanGrooveRenderer):
         )
         for bar in range(4)
     )
+    _GROOVE = (
+        replace(
+            _GROOVE[0],
+            bass_onsets=(0.0, 0.75, 1.5, 2.0, 2.75, 3.5),
+            bass_intervals=(0, 0, 0, 0, 0, 0),
+            bass_roles=("root", "fifth", "third", "octave", "fifth", "root"),
+            bass_accents=(1.04, 0.62, 0.76, 0.94, 0.64, 0.72),
+            chord_onsets=(0.0, 1.0, 1.5, 2.5, 3.5),
+            chord_accents=(0.68, 0.74, 0.82, 0.72, 0.86),
+            kick_onsets=(0.0, 1.5, 2.0, 3.5),
+            kick_accents=(0.98, 0.72, 0.90, 0.74),
+        ),
+        replace(
+            _GROOVE[1],
+            bass_onsets=(0.0, 0.5, 1.5, 2.0, 3.0, 3.75),
+            bass_intervals=(0, 0, 0, 0, 0, 0),
+            bass_roles=("root", "third", "fifth", "octave", "fifth", "root"),
+            bass_accents=(1.0, 0.56, 0.72, 0.92, 0.68, 0.60),
+            chord_onsets=(0.5, 1.5, 2.0, 3.0, 3.5),
+            chord_accents=(0.72, 0.82, 0.68, 0.76, 0.86),
+            kick_onsets=(0.0, 1.5, 2.0, 2.75, 3.5),
+            kick_accents=(0.96, 0.68, 0.90, 0.62, 0.72),
+        ),
+        replace(
+            _GROOVE[2],
+            bass_onsets=(0.0, 0.75, 1.5, 2.0, 2.5, 3.5),
+            bass_intervals=(0, 0, 0, 0, 0, 0),
+            bass_roles=("root", "fifth", "third", "octave", "third", "fifth"),
+            bass_accents=(1.04, 0.60, 0.74, 0.94, 0.56, 0.70),
+            chord_onsets=(0.0, 0.75, 1.5, 2.5, 3.5),
+            chord_accents=(0.68, 0.58, 0.82, 0.74, 0.88),
+            snare_onsets=(0.5, 1.0, 2.5, 3.0, 3.5),
+            snare_accents=(0.62, 0.84, 0.88, 0.64, 0.72),
+        ),
+        replace(
+            _GROOVE[3],
+            bass_onsets=(0.0, 0.75, 1.5, 2.0, 2.75, 3.0, 3.5, 3.75),
+            bass_intervals=(0, 0, 0, 0, 0, 0, 0, 0),
+            bass_roles=(
+                "root",
+                "fifth",
+                "third",
+                "octave",
+                "fifth",
+                "third",
+                "fifth",
+                "root",
+            ),
+            bass_accents=(1.04, 0.60, 0.72, 0.92, 0.60, 0.56, 0.68, 0.52),
+            chord_onsets=(0.0, 0.75, 1.5, 2.5, 3.25, 3.5, 3.75),
+            chord_accents=(0.68, 0.56, 0.80, 0.72, 0.58, 0.82, 0.90),
+        ),
+    )
     _MAIN_LEVELS = EnsembleLevels(0.90, 0.86, 0.38, 0.72, 0.98, 0.30)
 
 
@@ -2019,6 +2283,8 @@ class NewOrleansChaChaRenderer(HumanGrooveRenderer):
     _BASS_DURATION_BEATS = 0.46
     _CHORD_DURATION_BEATS = 0.24
     _REED_DURATION_BEATS = 0.32
+    _COMP_VOICE_CYCLE = (3, 2, 3, 2)
+    _COMP_OPEN_CYCLE = (False, True, False, False)
     _GROOVE = tuple(
         GrooveBar(
             bass_onsets=(0.0, 1.5, 2.5, 3.0, 3.5),
@@ -2043,6 +2309,42 @@ class NewOrleansChaChaRenderer(HumanGrooveRenderer):
         )
         for bar in range(4)
     )
+    _GROOVE = (
+        _GROOVE[0],
+        replace(
+            _GROOVE[1],
+            bass_onsets=(0.0, 1.5, 2.0, 2.75, 3.5),
+            bass_intervals=(0, 0, 0, 0, 0),
+            bass_roles=("root", "fifth", "octave", "third", "fifth"),
+            bass_accents=(1.02, 0.70, 0.84, 0.58, 0.74),
+            chord_onsets=(0.5, 0.75, 1.5, 2.5, 3.5),
+            chord_accents=(0.70, 0.56, 0.68, 0.80, 0.74),
+            auxiliary_onsets=(0.0, 0.75, 1.5, 2.5, 3.0, 3.5),
+            auxiliary_accents=(0.88, 0.58, 0.72, 0.84, 0.76, 0.66),
+        ),
+        replace(
+            _GROOVE[2],
+            bass_onsets=(0.0, 0.75, 1.5, 2.5, 3.0, 3.5),
+            bass_intervals=(0, 0, 0, 0, 0, 0),
+            bass_roles=("root", "third", "fifth", "octave", "fifth", "root"),
+            bass_accents=(1.04, 0.58, 0.70, 0.84, 0.76, 0.62),
+            chord_onsets=(0.5, 1.5, 1.75, 2.5, 3.5),
+            chord_accents=(0.72, 0.66, 0.54, 0.80, 0.74),
+            kick_onsets=(0.0, 1.5, 2.5, 3.5),
+            kick_accents=(0.94, 0.58, 0.72, 0.78),
+        ),
+        replace(
+            _GROOVE[3],
+            bass_onsets=(0.0, 1.5, 2.5, 3.0, 3.5, 3.75),
+            bass_intervals=(0, 0, 0, 0, 0, 0),
+            bass_roles=("root", "fifth", "octave", "fifth", "third", "root"),
+            bass_accents=(1.02, 0.70, 0.84, 0.74, 0.58, 0.52),
+            chord_onsets=(0.5, 1.5, 2.25, 2.5, 3.25, 3.5, 3.75),
+            chord_accents=(0.70, 0.66, 0.54, 0.78, 0.58, 0.70, 0.82),
+            snare_onsets=(1.0, 2.0, 3.0, 3.5, 3.75),
+            snare_accents=(0.58, 0.52, 0.62, 0.42, 0.54),
+        ),
+    )
     _MAIN_LEVELS = EnsembleLevels(0.92, 0.88, 0.48, 0.62, 0.92, 0.26)
 
 
@@ -2057,6 +2359,8 @@ class BluesShuffleRenderer(HumanGrooveRenderer):
     _BASS_DURATION_BEATS = 0.62
     _CHORD_DURATION_BEATS = 0.28
     _REED_DURATION_BEATS = 0.36
+    _COMP_VOICE_CYCLE = (2, 3, 2, 3)
+    _COMP_OPEN_CYCLE = (False, True, False, True)
     _GROOVE = tuple(
         GrooveBar(
             bass_onsets=(0.0, 0.67, 1.0, 1.67, 2.0, 2.67, 3.0, 3.67),
@@ -2089,6 +2393,63 @@ class BluesShuffleRenderer(HumanGrooveRenderer):
             hat_accents=(0.86, 0.52, 0.68, 0.50, 0.82, 0.52, 0.70, 0.54),
         )
         for bar in range(4)
+    )
+    _GROOVE = (
+        _GROOVE[0],
+        replace(
+            _GROOVE[1],
+            bass_roles=(
+                "root",
+                "third",
+                "fifth",
+                "color",
+                "octave",
+                "fifth",
+                "third",
+                "fifth",
+            ),
+            bass_accents=(1.0, 0.72, 0.84, 0.70, 0.94, 0.78, 0.70, 0.64),
+            chord_onsets=(0.0, 0.67, 1.67, 2.67, 3.67),
+            chord_accents=(0.60, 0.74, 0.70, 0.76, 0.72),
+            kick_onsets=(0.0, 1.67, 2.0, 3.67),
+            kick_accents=(1.0, 0.62, 0.90, 0.70),
+        ),
+        replace(
+            _GROOVE[2],
+            bass_roles=(
+                "root",
+                "fifth",
+                "color",
+                "third",
+                "octave",
+                "color",
+                "fifth",
+                "third",
+            ),
+            bass_accents=(1.02, 0.76, 0.72, 0.68, 0.94, 0.70, 0.82, 0.70),
+            chord_onsets=(0.67, 1.0, 1.67, 2.67, 3.67),
+            chord_accents=(0.74, 0.58, 0.70, 0.76, 0.72),
+            kick_onsets=(0.0, 0.67, 2.0, 3.5),
+            kick_accents=(1.0, 0.68, 0.90, 0.62),
+        ),
+        replace(
+            _GROOVE[3],
+            bass_roles=(
+                "root",
+                "third",
+                "fifth",
+                "color",
+                "octave",
+                "color",
+                "third",
+                "root",
+            ),
+            bass_accents=(1.04, 0.72, 0.82, 0.68, 0.92, 0.66, 0.62, 0.56),
+            chord_onsets=(0.67, 1.67, 2.0, 2.67, 3.0, 3.67),
+            chord_accents=(0.74, 0.70, 0.58, 0.76, 0.60, 0.80),
+            kick_onsets=(0.0, 0.67, 2.0, 2.67, 3.67),
+            kick_accents=(1.0, 0.68, 0.90, 0.70, 0.64),
+        ),
     )
     _MAIN_LEVELS = EnsembleLevels(0.96, 0.84, 0.54, 0.72, 0.70, 0.38)
 

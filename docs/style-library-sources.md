@@ -66,6 +66,13 @@ was newly authored to follow live accordion harmony. The adaptations are:
 
 ## Libraries evaluated but not bundled
 
+- The user-provided `~/projects/Mid` library was inspected read-only in W35.
+  It has no single verified license manifest, so no MIDI, melody, passage,
+  filename catalog, or style file is included. Only deduplicated corpus-level
+  accompaniment statistics informed newly authored Ostinato rhythm and voicing
+  changes; the method and evidence boundary are recorded in
+  `docs/midi-library-analysis.md`.
+
 - [MMA — Musical MIDI Accompaniment](https://mellowood.ca/mma/downloads.html)
   publishes more than 1,000 patterns, but the supplied files are GPL-2.0. They
   were not copied into this MIT-licensed repository.

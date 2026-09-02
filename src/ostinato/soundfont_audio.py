@@ -552,6 +552,9 @@ class SoundFontArrangementRenderer:
                 groove,
                 levels,
                 phrase_dynamic,
+                section,
+                bar_index,
+                fill_variation,
                 final_bar,
             )
 
@@ -564,6 +567,9 @@ class SoundFontArrangementRenderer:
         groove: GrooveBar,
         levels: EnsembleLevels,
         dynamic: float,
+        section: DemoSection,
+        bar_index: int,
+        fill_variation: int | None,
         final_bar: bool,
     ) -> None:
         palette = self._palette
@@ -601,10 +607,11 @@ class SoundFontArrangementRenderer:
         intervals = self._INTERVALS[chord.quality]
         for pulse, onset in enumerate(chord_onsets):
             rotation = pulse + groove.voicing_rotation
-            voicing = tuple(
-                intervals[(rotation + voice) % len(intervals)]
-                + (12 if rotation + voice >= len(intervals) else 0)
-                for voice in range(min(3, len(intervals)))
+            voicing = self._renderer_type._comp_voicing(
+                chord.quality,
+                rotation,
+                bar_index,
+                pulse,
             )
             duration = (
                 self._renderer_type.BEATS_PER_BAR - onset - 0.05
@@ -626,9 +633,14 @@ class SoundFontArrangementRenderer:
                     duration,
                 )
 
+        solo_section = (
+            section in (DemoSection.INTRO, DemoSection.ENDING)
+            or fill_variation is not None
+        )
+        feature_line = solo_section or groove.reed_onsets is not None
         reed_onsets = (
-            chord_onsets
-            if final_bar
+            self._renderer_type._solo_onsets(section, groove, final_bar, fill_variation)
+            if solo_section
             else (
                 groove.reed_onsets
                 if groove.reed_onsets is not None
@@ -636,17 +648,40 @@ class SoundFontArrangementRenderer:
             )
         )
         for pulse, onset in enumerate(reed_onsets):
-            rotation = pulse + groove.voicing_rotation
-            reed_voicing = tuple(
-                intervals[(rotation + voice) % len(intervals)]
-                + (12 if rotation + voice >= len(intervals) else 0)
-                for voice in range(min(3, len(intervals)))
-            )
             duration = (
                 self._renderer_type.BEATS_PER_BAR - onset - 0.05
                 if final_bar and pulse == len(reed_onsets) - 1
-                else self._renderer_type._REED_DURATION_BEATS
+                else min(
+                    self._renderer_type._REED_DURATION_BEATS * 1.15,
+                    max(
+                        0.12,
+                        (
+                            reed_onsets[pulse + 1] - onset
+                            if pulse + 1 < len(reed_onsets)
+                            else self._renderer_type.BEATS_PER_BAR - onset
+                        )
+                        * 0.82,
+                    ),
+                )
             )
+            if feature_line:
+                reed_voicing: tuple[int, ...] = (
+                    self._renderer_type._solo_interval(
+                        chord.quality,
+                        pulse,
+                        section,
+                        bar_index,
+                        fill_variation,
+                        final_note=final_bar and pulse == len(reed_onsets) - 1,
+                    ),
+                )
+            else:
+                rotation = pulse + groove.voicing_rotation
+                reed_voicing = tuple(
+                    intervals[(rotation + voice) % len(intervals)]
+                    + (12 if rotation + voice >= len(intervals) else 0)
+                    for voice in range(min(3, len(intervals)))
+                )
             for interval in reed_voicing:
                 reed_note = UPPER_C_NOTE + chord.root_pitch_class + interval
                 if palette.reed_high_note is not None:
@@ -659,7 +694,7 @@ class SoundFontArrangementRenderer:
                     2,
                     reed_note,
                     self._velocity(
-                        66,
+                        74 if solo_section else (70 if feature_line else 66),
                         levels.bandoneon,
                         dynamic * self._accent(groove.reed_accents, pulse),
                     ),

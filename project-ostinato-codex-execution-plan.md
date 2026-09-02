@@ -16,7 +16,8 @@ The maintained product includes:
 - a guided MIDI input/output setup wizard with saved role detection;
 - real-time 39-key piano and 120-button Stradella visualization;
 - a backend-owned arranger with style-shaped intro/main/ending, two one-bar
-  Fill Ins, sync, fixed tempo, and left-hand tempo following;
+  Fill Ins, chord-aware monophonic section solos, sync, fixed tempo, and
+  left-hand tempo following;
 - fourteen built-in four-bar styles with genre-profiled open-sample SFZ racks,
   plus a sampled General MIDI renderer for custom styles and fallback;
 - an advanced custom-style designer with editable instrumentation, mix,
@@ -132,6 +133,11 @@ never replace saved machine-specific state with guessed defaults.
 
 ## Current evidence and provenance
 
+- `docs/evidence/w35-local-midi-arrangement-enrichment.md` records the
+  deduplicated local-library analysis and richer accompaniment implementation;
+  `docs/midi-library-analysis.md` contains the aggregate findings and limits.
+- `docs/evidence/w34-chord-aware-section-solos.md` records the deterministic
+  chord-tone solo model for intros, endings, and both Fill Ins.
 - `docs/evidence/w33-style-research-orchestra-timeline.md` records the
   all-style orchestration review, clarinet/trumpet and guitar-rack upgrades,
   and shared designer/live arrangement timeline.

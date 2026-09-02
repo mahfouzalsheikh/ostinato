@@ -163,11 +163,21 @@ and the live performance view directly comparable.
 Each style has a varying four-bar main phrase, its own four-bar intro material,
 and a four-bar ending with a final cadence. Tango's intro adds an expressive
 piano/string statement, syncopated build, and lively launch. Instrument layers
-have independent stereo placement and bar-to-bar dynamics. Each of the two
+have independent stereo placement and bar-to-bar dynamics. Main comping cycles
+through shell, close, and open chord voicings, while sparse monophonic answer
+figures leave room for the accordion lead. Bass approaches, anticipations, and
+drum details develop across the phrase rather than cloning one measure. Each of the two
 Fill Ins occupies the next complete bar: variation 1 is a rhythmic lift and
 variation 2 is a bass/melodic turnaround. The ending enters at the next bar
-and stops after its final bar. Stop playback before changing style. These are
-original hard-coded arrangements, not style-v1 files or proprietary imports.
+and stops after its final bar. Intro, Ending, and both Fill Ins feature a
+monophonic improvised line whose rhythm and contour follow the selected style.
+Every note is derived from the currently recognized chord, chord-quality
+changes redirect the line at the next audio chunk, and the final cadence lands
+on the current root. The feature instrument comes from the style's sampled
+answer role (for example violin, flute, trumpet, or clarinet) or from the
+custom style's selected Fill instrument. Stop playback before changing style.
+These are original hard-coded arrangements, not style-v1 files or proprietary
+imports.
 In Docker, every built-in is rendered by a genre-profiled sfizz rack with open
 multi-sampled piano or guitar, upright or electric bass, orchestral voices, and
 brushed or full live drums/percussion. Classic Waltz retains the exact rack

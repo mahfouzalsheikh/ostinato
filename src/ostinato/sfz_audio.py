@@ -17,6 +17,7 @@ from ostinato.computer_audio import (
     MIDDLE_C_NOTE,
     UPPER_C_NOTE,
     DemoAudioConfig,
+    DemoSection,
     EnsembleLevels,
     GrooveBar,
 )
@@ -757,6 +758,9 @@ class SfzWaltzArrangementRenderer(SoundFontArrangementRenderer):
         groove: GrooveBar,
         levels: EnsembleLevels,
         dynamic: float,
+        section: DemoSection,
+        bar_index: int,
+        fill_variation: int | None,
         final_bar: bool,
     ) -> None:
         intervals = self._INTERVALS[chord.quality]
@@ -793,10 +797,11 @@ class SfzWaltzArrangementRenderer(SoundFontArrangementRenderer):
         )
         for pulse, onset in enumerate(chord_onsets):
             rotation = pulse + groove.voicing_rotation
-            voicing = tuple(
-                intervals[(rotation + voice) % len(intervals)]
-                + (12 if rotation + voice >= len(intervals) else 0)
-                for voice in range(min(3, len(intervals)))
+            voicing = self._renderer_type._comp_voicing(
+                chord.quality,
+                rotation,
+                bar_index,
+                pulse,
             )
             duration = (
                 self._renderer_type.BEATS_PER_BAR - onset - 0.05
@@ -818,11 +823,44 @@ class SfzWaltzArrangementRenderer(SoundFontArrangementRenderer):
                     duration - (0.018 * voice),
                 )
 
-        reed_onsets = groove.reed_onsets or ()
+        solo_section = (
+            section in (DemoSection.INTRO, DemoSection.ENDING)
+            or fill_variation is not None
+        )
+        reed_onsets = (
+            self._renderer_type._solo_onsets(section, groove, final_bar, fill_variation)
+            if solo_section
+            else groove.reed_onsets or ()
+        )
         for pulse, onset in enumerate(reed_onsets):
-            melody_interval = intervals[
-                (groove.voicing_rotation + pulse + 2) % len(intervals)
-            ]
+            melody_interval = (
+                self._renderer_type._solo_interval(
+                    chord.quality,
+                    pulse,
+                    section,
+                    bar_index,
+                    fill_variation,
+                    final_note=final_bar and pulse == len(reed_onsets) - 1,
+                )
+                if solo_section
+                else intervals[(groove.voicing_rotation + pulse + 2) % len(intervals)]
+            )
+            duration = (
+                self._renderer_type.BEATS_PER_BAR - onset - 0.05
+                if final_bar and pulse == len(reed_onsets) - 1
+                else min(
+                    0.70,
+                    max(
+                        0.18,
+                        (
+                            reed_onsets[pulse + 1] - onset
+                            if pulse + 1 < len(reed_onsets)
+                            else self._renderer_type.BEATS_PER_BAR - onset
+                        )
+                        * 0.82,
+                    ),
+                )
+            )
             self._queue_at_beat(
                 bar_beat + onset + 0.008,
                 start_beat,
@@ -830,11 +868,11 @@ class SfzWaltzArrangementRenderer(SoundFontArrangementRenderer):
                 FLUTE_CHANNEL,
                 UPPER_C_NOTE + chord.root_pitch_class + melody_interval,
                 self._velocity(
-                    70,
+                    76 if solo_section else 70,
                     levels.bandoneon,
                     dynamic * self._accent(groove.reed_accents, pulse),
                 ),
-                0.70,
+                duration,
             )
 
         for onset in groove.pad_onsets or ():

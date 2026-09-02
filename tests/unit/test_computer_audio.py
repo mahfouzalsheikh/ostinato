@@ -117,6 +117,50 @@ class DemoArrangementRendererTests(unittest.TestCase):
                             )
                         )
 
+    def test_midi_informed_styles_develop_across_the_four_bar_phrase(self) -> None:
+        for style_id in (
+            "country_two_step",
+            "reggae_one_drop",
+            "brazilian_samba",
+            "new_orleans_chacha",
+            "blues_shuffle",
+        ):
+            renderer = DEMO_STYLES[style_id].renderer
+            signatures = {
+                (
+                    groove.bass_onsets,
+                    groove.chord_onsets,
+                    groove.kick_onsets,
+                    groove.snare_onsets,
+                )
+                for groove in renderer._GROOVE
+            }
+            with self.subTest(style=style_id):
+                self.assertGreaterEqual(len(signatures), 3)
+
+    def test_comping_cycles_between_shell_close_and_open_voicings(self) -> None:
+        renderer = SwingFoxtrotRenderer
+        voicings = {
+            renderer._comp_voicing(
+                ChordQuality.DOMINANT_SEVENTH,
+                pulse,
+                bar,
+                pulse,
+            )
+            for bar in range(4)
+            for pulse in range(4)
+        }
+
+        self.assertTrue({2, 3, 4}.issubset({len(voicing) for voicing in voicings}))
+        self.assertTrue(any(max(voicing) >= 19 for voicing in voicings))
+        self.assertTrue(
+            all(
+                interval % 12 in {0, 4, 7, 10}
+                for voicing in voicings
+                for interval in voicing
+            )
+        )
+
     def test_every_style_has_distinct_intro_ending_and_two_fill_materials(self) -> None:
         for definition in DEMO_STYLES.values():
             renderer = definition.renderer

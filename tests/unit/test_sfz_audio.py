@@ -193,6 +193,24 @@ class SfzAudioTests(unittest.TestCase):
         )
         self.assertTrue(engine.closed)
 
+    def test_waltz_intro_flute_plays_a_monophonic_chord_tone_solo(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_name:
+            engine = RecordingEngine()
+            renderer = SfzWaltzArrangementRenderer(
+                DemoAudioConfig(tempo_bpm=60, sample_rate=100, chunk_frames=10),
+                make_paths(Path(temporary_name)),
+                engine_factory=lambda _config, _paths: engine,
+            )
+            renderer.start_intro()
+
+            renderer.render(1_200, ChordState(2, ChordQuality.MINOR, 2, 1.0, (), 0))
+
+        flute_notes = [note for channel, note, _ in engine.notes_on if channel == 2]
+        flute_frames = [frame for channel, frame in engine.note_frames if channel == 2]
+        self.assertTrue(flute_notes)
+        self.assertTrue(all(note % 12 in {2, 5, 9} for note in flute_notes))
+        self.assertEqual(len(flute_frames), len(set(flute_frames)))
+
     def test_audio_service_reports_sfizz_only_for_the_built_in_waltz(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_name:
             audio = ProceduralArrangerAudio(

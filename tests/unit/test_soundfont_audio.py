@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from collections import Counter
 
 from ostinato.computer_audio import (
     DEMO_STYLES,
@@ -23,6 +24,7 @@ class FakeSynthEngine:
         self.controls: list[tuple[int, int, int]] = []
         self.gains: list[float] = []
         self.note_ons: list[tuple[int, int, int]] = []
+        self.note_on_frames: list[tuple[int, int, int]] = []
         self.note_offs: list[tuple[int, int]] = []
         self.rendered_frames = 0
         self.closed = False
@@ -38,6 +40,7 @@ class FakeSynthEngine:
 
     def note_on(self, channel: int, note: int, velocity: int) -> None:
         self.note_ons.append((channel, note, velocity))
+        self.note_on_frames.append((self.rendered_frames, channel, note))
 
     def note_off(self, channel: int, note: int) -> None:
         self.note_offs.append((channel, note))
@@ -244,6 +247,34 @@ class SoundFontArrangementRendererTests(unittest.TestCase):
                         harmonic_notes,
                     )
 
+    def test_main_melodic_answers_are_monophonic_around_the_lead(self) -> None:
+        renderer, engine = self.create_renderer(
+            "modern_tango", tempo_bpm=60, sample_rate=100
+        )
+
+        renderer.render(1_600, chord(2, ChordQuality.MINOR))
+
+        answer_frames = [
+            frame for frame, channel, _note in engine.note_on_frames if channel == 2
+        ]
+        self.assertTrue(answer_frames)
+        self.assertEqual(len(answer_frames), len(set(answer_frames)))
+
+    def test_comping_uses_different_voice_counts_across_the_phrase(self) -> None:
+        renderer, engine = self.create_renderer(
+            "modern_tango", tempo_bpm=60, sample_rate=100
+        )
+
+        renderer.render(1_600, chord())
+
+        attacks = Counter(
+            frame
+            for frame, channel, _note in engine.note_on_frames
+            if channel == 1 and frame > 0
+        )
+        self.assertIn(2, attacks.values())
+        self.assertIn(3, attacks.values())
+
     def test_live_bass_inversion_does_not_transpose_the_generated_pattern(self) -> None:
         renderer, engine = self.create_renderer(
             "swing_foxtrot", tempo_bpm=60, sample_rate=100
@@ -312,6 +343,74 @@ class SoundFontArrangementRendererTests(unittest.TestCase):
         self.assertGreater(len(engine.note_ons), notes_before_fill)
         renderer.render(399, chord())
         self.assertIsNone(renderer.fill_variation)
+
+    def test_intro_and_fills_play_monophonic_chord_tone_solos(self) -> None:
+        expected = {2, 6, 9, 0}
+        for style_id in DEMO_STYLES:
+            with self.subTest(style=style_id, section="intro"):
+                renderer, engine = self.create_renderer(
+                    style_id, tempo_bpm=60, sample_rate=100
+                )
+                renderer.start_intro()
+                renderer.render(
+                    round(renderer._renderer_type.BEATS_PER_BAR * 4 * 100),
+                    chord(2, ChordQuality.DOMINANT_SEVENTH),
+                )
+                solo_events = [
+                    event for event in engine.note_on_frames if event[1] == 2
+                ]
+                self.assertTrue(solo_events)
+                self.assertTrue(
+                    all(note % 12 in expected for _, _, note in solo_events)
+                )
+                self.assertEqual(
+                    len({frame for frame, _, _ in solo_events}), len(solo_events)
+                )
+
+            for variation in (1, 2):
+                with self.subTest(style=style_id, fill=variation):
+                    renderer, engine = self.create_renderer(
+                        style_id, tempo_bpm=60, sample_rate=100
+                    )
+                    beats = renderer._renderer_type.BEATS_PER_BAR
+                    renderer.request_fill(variation)
+                    renderer.render(round(beats * 100), chord(2))
+                    engine.note_on_frames.clear()
+                    renderer.render(round(beats * 100), chord(2))
+                    solo_events = [
+                        event for event in engine.note_on_frames if event[1] == 2
+                    ]
+                    self.assertTrue(solo_events)
+                    self.assertEqual(
+                        len({frame for frame, _, _ in solo_events}), len(solo_events)
+                    )
+
+    def test_fill_variations_use_distinct_solo_contours(self) -> None:
+        sequences: list[list[int]] = []
+        for variation in (1, 2):
+            renderer, engine = self.create_renderer(
+                "modern_tango", tempo_bpm=60, sample_rate=100
+            )
+            renderer.request_fill(variation)
+            renderer.render(400, chord())
+            engine.note_ons.clear()
+            renderer.render(400, chord())
+            sequences.append(
+                [note for channel, note, _ in engine.note_ons if channel == 2]
+            )
+
+        self.assertNotEqual(sequences[0], sequences[1])
+
+    def test_ending_solo_resolves_to_the_current_chord_root(self) -> None:
+        renderer, engine = self.create_renderer(tempo_bpm=60, sample_rate=100)
+        renderer.request_ending()
+        renderer.render(400, chord(5, ChordQuality.MINOR))
+        engine.note_ons.clear()
+        renderer.render(1_600, chord(5, ChordQuality.MINOR))
+
+        solo_notes = [note for channel, note, _ in engine.note_ons if channel == 2]
+        self.assertTrue(solo_notes)
+        self.assertEqual(solo_notes[-1] % 12, 5)
 
     def test_close_releases_native_engine_once(self) -> None:
         renderer, engine = self.create_renderer()
