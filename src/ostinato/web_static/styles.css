@@ -316,6 +316,7 @@ h2 {
 .arranger-grid {
   display: grid;
   grid-template-columns:
+    minmax(190px, 0.9fr)
     minmax(220px, 1.15fr)
     minmax(150px, 0.62fr)
     minmax(190px, 0.72fr)

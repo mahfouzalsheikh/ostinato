@@ -19,7 +19,8 @@ The maintained product includes:
   Fill Ins, chord-aware monophonic section solos, sync, fixed tempo, and
   left-hand tempo following;
 - fourteen built-in four-bar styles with genre-profiled open-sample SFZ racks,
-  plus a sampled General MIDI renderer for custom styles and fallback;
+  plus sampled General MIDI rendering for custom styles and 105 deduplicated,
+  grouped host-local KORG imports;
 - an advanced custom-style designer with editable instrumentation, mix,
   register, articulation, meter, phrase length, and live unsaved preview;
 - explicit PipeWire/Bluetooth or ALSA accompaniment-output selection;
@@ -133,6 +134,34 @@ never replace saved machine-specific state with guessed defaults.
 
 ## Current evidence and provenance
 
+- `docs/evidence/w42-korg-library-groups-and-deduplication.md` records the full
+  official primary-package inventory, actual Pa80-converter compatibility
+  probes, exact live-payload deduplication, the 105-style grouped UI catalog,
+  and deployed software verification.
+- `docs/evidence/w41-korg-arabic-world-expansion.md` records the official
+  Turkish/Arabic/World and World-package conversion, the forty-five-style UI
+  catalog, rejected incompatible meters and converter failures, and deployed
+  software verification.
+- `docs/evidence/w40-korg-volume-2-library.md` records the official
+  `Styl-v02.zip` import, the expanded sixteen-style UI catalog, the explicit
+  melodic-anchor fallback for styles without a CV1 bass part, and deployed
+  software verification.
+- `docs/evidence/w39-korg-live-library.md` records the read-only local style
+  catalog, UI/timeline integration, explicit CV1 chord policy, deployed live
+  scheduler, and non-silent real-FluidSynth verification for all eight styles.
+- `docs/evidence/w38-korg-pa80-reference-import.md` records the official
+  converter reference workflow, strict per-Chord-Variation SMF importer, all
+  eight locally imported `Styl-v01` styles, and fixed-pitch offline audio
+  references. Source-chord/transposition semantics and live integration remain
+  gated.
+- `docs/evidence/w37-korg-styl-v01-inspection.md` records the real official
+  `Styl-v01.zip` extraction, the catalog-only legacy `KORF` probe, and the
+  confirmed absence of embedded Standard MIDI chunks. Musical decoding and
+  playback remain gated on a MIDI export or verified native semantics.
+- `docs/evidence/w36-korg-style-import-foundation.md` records the local-only
+  KORG asset workflow, secure package inspection, vendor-neutral style model,
+  and synthetic marker-based MIDI import. Its real-source and playback gates
+  are pending.
 - `docs/evidence/w35-local-midi-arrangement-enrichment.md` records the
   deduplicated local-library analysis and richer accompaniment implementation;
   `docs/midi-library-analysis.md` contains the aggregate findings and limits.
@@ -169,8 +198,9 @@ never replace saved machine-specific state with guessed defaults.
 
 - physical latency and endurance measurements on the final performance route;
 - further arrangement variations after performer listening;
-- user-supplied style import only when format semantics and redistribution
-  boundaries are explicit;
+- authenticated KORG NTT/key behavior or higher Chord Variation selection if
+  verified semantics become available;
+- experimental direct `.STY` decoding only from verified format semantics;
 - authenticated remote access if the web service is ever exposed beyond
   loopback; and
 - Raspberry Pi, GPIO, enclosure, and kiosk work after the laptop version passes

@@ -39,6 +39,17 @@ from ostinato.sfz_audio import (
 )
 from ostinato.soundfont_audio import SoundFontArrangementRenderer
 from ostinato.style_designer import CustomStyle
+from ostinato.styles.groups import (
+    BUILT_IN_STYLE_GROUP,
+    CUSTOM_STYLE_GROUP,
+    imported_style_group,
+)
+from ostinato.styles.live_audio import (
+    ImportedStyleArrangementRenderer,
+    imported_style_playback_info,
+    imported_style_rhythm_spans,
+)
+from ostinato.styles.models import Style
 
 JsonObject = dict[str, object]
 CHORD_COALESCE_NS = 6_000_000
@@ -329,7 +340,10 @@ class ArrangerAudio(Protocol):
         """Return the queued or currently sounding fill variation."""
 
     def select_style(
-        self, style_id: str, custom_style: CustomStyle | None = None
+        self,
+        style_id: str,
+        custom_style: CustomStyle | None = None,
+        imported_style: Style | None = None,
     ) -> None: ...
 
     def set_tempo(self, tempo_bpm: int) -> None: ...
@@ -366,6 +380,7 @@ class ProceduralArrangerAudio:
         first_style = next(iter(DEMO_STYLES.values()))
         self._style_id = first_style.id
         self._custom_style: CustomStyle | None = None
+        self._imported_style: Style | None = None
         self._tempo_bpm = first_style.default_tempo_bpm
         self._chord: ChordState | None = None
         self._sink_factory = sink_factory or (
@@ -435,6 +450,8 @@ class ProceduralArrangerAudio:
             and self._sfz_waltz_paths is not None
         ):
             return "sfizz · open sampled orchestra"
+        if self._imported_style is not None and self._soundfont_path:
+            return f"FluidSynth · {self._soundfont_name} · local KORG import"
         if self._custom_style is None and self._sfz_style_paths is not None:
             return "sfizz · open sampled genre ensemble"
         if self._soundfont_path:
@@ -442,20 +459,30 @@ class ProceduralArrangerAudio:
         return "procedural PCM"
 
     def select_style(
-        self, style_id: str, custom_style: CustomStyle | None = None
+        self,
+        style_id: str,
+        custom_style: CustomStyle | None = None,
+        imported_style: Style | None = None,
     ) -> None:
-        if style_id not in DEMO_STYLES:
+        if imported_style is None and style_id not in DEMO_STYLES:
             raise ArrangerError(f"unknown arranger style: {style_id}")
-        if custom_style is not None and self._soundfont_path is None:
+        if custom_style is not None and imported_style is not None:
+            raise ArrangerError("a style cannot be both custom and imported")
+        if (
+            custom_style is not None or imported_style is not None
+        ) and self._soundfont_path is None:
             raise ArrangerError(
-                "custom instrument styles require a configured SoundFont"
+                "custom and imported styles require a configured SoundFont"
             )
+        if imported_style is not None:
+            imported_style_playback_info(imported_style)
         if self._session is not None:
             with suppress(AudioPlaybackError):
                 self._session.close()
             self._session = None
         self._style_id = style_id
         self._custom_style = custom_style
+        self._imported_style = imported_style
 
     def set_tempo(self, tempo_bpm: int) -> None:
         self._tempo_bpm = tempo_bpm
@@ -505,7 +532,24 @@ class ProceduralArrangerAudio:
                 raise ArrangerError(
                     f"could not open accompaniment audio: {error}"
                 ) from error
-            if (
+            if self._imported_style is not None and self._soundfont_path:
+                imported_style = self._imported_style
+                soundfont_path = self._soundfont_path
+
+                def imported_renderer_factory(
+                    _style_id: str, renderer_config: DemoAudioConfig
+                ) -> ImportedStyleArrangementRenderer:
+                    return ImportedStyleArrangementRenderer(
+                        imported_style, renderer_config, soundfont_path
+                    )
+
+                self._session = RealtimeDemoArranger(
+                    config,
+                    sink,
+                    style_id=self._style_id,
+                    renderer_factory=imported_renderer_factory,
+                )
+            elif (
                 self._style_id == "classic_waltz"
                 and self._custom_style is None
                 and self._sfz_waltz_paths is not None
@@ -588,6 +632,7 @@ class LiveArrangerService:
         first_style = next(iter(DEMO_STYLES.values()))
         self._audio = audio or ProceduralArrangerAudio()
         self._custom_styles: dict[str, CustomStyle] = {}
+        self._imported_styles: dict[str, Style] = {}
         self._clock = clock
         self._style_id = first_style.id
         self._tempo_bpm = first_style.default_tempo_bpm
@@ -628,14 +673,42 @@ class LiveArrangerService:
         if self._running:
             raise ArrangerError("stop the arranger before changing custom styles")
         self._stop_style_preview()
+        collisions = {style.id for style in styles} & (
+            set(DEMO_STYLES) | set(self._imported_styles)
+        )
+        if collisions:
+            raise ArrangerError(
+                f"duplicate arranger style identifier: {sorted(collisions)[0]}"
+            )
         self._custom_styles = {style.id: style for style in styles}
-        if self._style_id in DEMO_STYLES:
+        if self._style_id in DEMO_STYLES or self._style_id in self._imported_styles:
             return
         selected = self._custom_styles.get(self._style_id)
         if selected is None:
             self._select_style(next(iter(DEMO_STYLES)))
             return
         self._apply_style_selection(selected.id, selected)
+
+    def configure_imported_styles(self, styles: Sequence[Style]) -> None:
+        """Replace the read-only local import catalog while transport is stopped."""
+
+        if self._running:
+            raise ArrangerError("stop the arranger before changing imported styles")
+        validated: dict[str, Style] = {}
+        reserved = set(DEMO_STYLES) | set(self._custom_styles)
+        for style in styles:
+            imported_style_playback_info(style)
+            if style.id in reserved or style.id in validated:
+                raise ArrangerError(f"duplicate arranger style identifier: {style.id}")
+            validated[style.id] = style
+        self._imported_styles = validated
+        if self._style_id in DEMO_STYLES or self._style_id in self._custom_styles:
+            return
+        selected = self._imported_styles.get(self._style_id)
+        if selected is None:
+            self._select_style(next(iter(DEMO_STYLES)))
+            return
+        self._apply_style_selection(selected.id, None, selected)
 
     def configure_profile(self, profile: Mapping[str, object] | None) -> None:
         """Use only reviewed treble/bass/chord channels from the saved profile."""
@@ -831,10 +904,12 @@ class LiveArrangerService:
 
         definition = self._current_definition()
         custom_style = self._custom_styles.get(self._style_id)
+        imported_style = self._imported_styles.get(self._style_id)
+        beats_per_bar = self._current_beats_per_bar()
         section = self._audio.section.value if self._running else "stopped"
         position_ticks = self._audio.position_ticks if self._running else None
         beat_index = (
-            (position_ticks // TRANSPORT_TICKS_PER_BEAT) % definition.beats_per_bar
+            (position_ticks // TRANSPORT_TICKS_PER_BEAT) % beats_per_bar
             if position_ticks is not None
             else None
         )
@@ -852,6 +927,7 @@ class LiveArrangerService:
                     "beats_per_bar": style.beats_per_bar,
                     "provenance": style.provenance,
                     "custom": False,
+                    "group": BUILT_IN_STYLE_GROUP,
                 }
                 for style in DEMO_STYLES.values()
             ]
@@ -867,8 +943,29 @@ class LiveArrangerService:
                     "beats_per_bar": style.beats_per_bar,
                     "phrase_bars": style.phrase_bars,
                     "custom": True,
+                    "group": CUSTOM_STYLE_GROUP,
                 }
                 for style in self._custom_styles.values()
+            ]
+            + [
+                {
+                    "id": style.id,
+                    "name": style.name,
+                    "description": (
+                        "Local KORG import · CV1 · GM program approximation · "
+                        "Ostinato chord adaptation"
+                    ),
+                    "default_tempo_bpm": self._imported_default_tempo(style),
+                    "beats_per_bar": imported_style_playback_info(style).beats_per_bar,
+                    "provenance": (
+                        f"{style.source.manufacturer} {style.source.source_format} · "
+                        f"{style.source.original_file}"
+                    ),
+                    "custom": False,
+                    "imported": True,
+                    "group": imported_style_group(style),
+                }
+                for style in self._imported_styles.values()
             ],
             "tempo_bpm": self._tempo_bpm,
             "tempo_source": self._tempo_source,
@@ -876,7 +973,11 @@ class LiveArrangerService:
             "beats_per_bar": (
                 custom_style.beats_per_bar
                 if custom_style is not None
-                else definition.beats_per_bar
+                else (
+                    imported_style_playback_info(imported_style).beats_per_bar
+                    if imported_style is not None
+                    else definition.beats_per_bar
+                )
             ),
             "ticks_per_beat": TRANSPORT_TICKS_PER_BEAT,
             "position_ticks": position_ticks,
@@ -964,10 +1065,11 @@ class LiveArrangerService:
 
     def _restore_selected_audio(self) -> None:
         custom_style = self._custom_styles.get(self._style_id)
+        imported_style = self._imported_styles.get(self._style_id)
         base_style_id = (
             custom_style.base_style_id if custom_style is not None else self._style_id
         )
-        self._audio.select_style(base_style_id, custom_style)
+        self._audio.select_style(base_style_id, custom_style, imported_style)
         self._audio.set_tempo(self._tempo_bpm)
         self._audio.set_chord(self._chord)
 
@@ -977,28 +1079,35 @@ class LiveArrangerService:
         if self._running:
             raise ArrangerError("stop the arranger before changing style")
         custom_style = self._custom_styles.get(value)
-        if value not in DEMO_STYLES and custom_style is None:
+        imported_style = self._imported_styles.get(value)
+        if value not in DEMO_STYLES and custom_style is None and imported_style is None:
             raise ArrangerError(f"unknown arranger style: {value}")
-        self._apply_style_selection(value, custom_style)
+        self._apply_style_selection(value, custom_style, imported_style)
 
     def _apply_style_selection(
-        self, value: str, custom_style: CustomStyle | None
+        self,
+        value: str,
+        custom_style: CustomStyle | None,
+        imported_style: Style | None = None,
     ) -> None:
         base_style_id = (
             custom_style.base_style_id if custom_style is not None else value
         )
-        definition = DEMO_STYLES[base_style_id]
         self._style_id = value
         self._reset_auto_tempo()
         if self._tempo_mode == TEMPO_MODE_AUTO:
             self._tempo_bpm = (
                 custom_style.tempo_bpm
                 if custom_style is not None
-                else definition.default_tempo_bpm
+                else (
+                    self._imported_default_tempo(imported_style)
+                    if imported_style is not None
+                    else DEMO_STYLES[base_style_id].default_tempo_bpm
+                )
             )
             self._tempo_source = "style default"
         self._intro_armed = False
-        self._audio.select_style(base_style_id, custom_style)
+        self._audio.select_style(base_style_id, custom_style, imported_style)
         self._audio.set_tempo(self._tempo_bpm)
 
     def _current_definition(self) -> DemoStyleDefinition:
@@ -1006,7 +1115,22 @@ class LiveArrangerService:
         style_id = (
             custom_style.base_style_id if custom_style is not None else self._style_id
         )
-        return DEMO_STYLES[style_id]
+        return DEMO_STYLES.get(style_id, next(iter(DEMO_STYLES.values())))
+
+    def _current_beats_per_bar(self) -> int:
+        custom_style = self._custom_styles.get(self._style_id)
+        if custom_style is not None:
+            return custom_style.beats_per_bar
+        imported_style = self._imported_styles.get(self._style_id)
+        if imported_style is not None:
+            return imported_style_playback_info(imported_style).beats_per_bar
+        return self._current_definition().beats_per_bar
+
+    @staticmethod
+    def _imported_default_tempo(style: Style | None) -> int:
+        if style is None or style.tempo_bpm is None:
+            return 120
+        return max(MIN_TEMPO_BPM, min(MAX_TEMPO_BPM, round(style.tempo_bpm)))
 
     def _set_tempo_mode(self, value: object | None) -> None:
         if value not in (TEMPO_MODE_AUTO, TEMPO_MODE_FIXED):
@@ -1052,11 +1176,16 @@ class LiveArrangerService:
             return
         self._auto_tempo_sources.add(source)
         custom_style = self._custom_styles.get(self._style_id)
+        imported_style = self._imported_styles.get(self._style_id)
         tempo = self._rhythm_tracker.observe(
             timestamp_ns,
-            beat_spans=style_rhythm_spans(
-                self._current_definition().id,
-                custom_style.phrase_bars if custom_style is not None else None,
+            beat_spans=(
+                imported_style_rhythm_spans(imported_style)
+                if imported_style is not None
+                else style_rhythm_spans(
+                    self._current_definition().id,
+                    custom_style.phrase_bars if custom_style is not None else None,
+                )
             ),
             reference_bpm=self._tempo_bpm,
         )
@@ -1123,7 +1252,7 @@ class LiveArrangerService:
         position_ticks = self._audio.position_ticks
         if position_ticks is None:
             return True
-        bar_ticks = self._current_definition().beats_per_bar * TRANSPORT_TICKS_PER_BEAT
+        bar_ticks = self._current_beats_per_bar() * TRANSPORT_TICKS_PER_BEAT
         position_in_bar = position_ticks % bar_ticks
         return (
             position_in_bar <= TRANSPORT_TICKS_PER_BEAT // 3
@@ -1158,9 +1287,11 @@ class LiveArrangerService:
         self._arm_sync_stop(timestamp_ns)
 
     def _arm_sync_stop(self, timestamp_ns: int) -> None:
-        style = self._current_definition()
         duration_ns = round(
-            SYNC_STOP_BARS * style.beats_per_bar * 60_000_000_000 / self._tempo_bpm
+            SYNC_STOP_BARS
+            * self._current_beats_per_bar()
+            * 60_000_000_000
+            / self._tempo_bpm
         )
         self._sync_stop_at_ns = timestamp_ns + duration_ns
 

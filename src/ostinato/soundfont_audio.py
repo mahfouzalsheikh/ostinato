@@ -115,6 +115,11 @@ class FluidSynthEngine:
     def control_change(self, channel: int, controller: int, value: int) -> None:
         self._call("fluid_synth_cc", channel, controller, value)
 
+    def pitch_bend(self, channel: int, value: int) -> None:
+        """Set the 14-bit MIDI pitch wheel value for one synth channel."""
+
+        self._call("fluid_synth_pitch_bend", channel, value)
+
     def set_gain(self, gain: float) -> None:
         self._library.fluid_synth_set_gain(self._require_synth(), gain)
 
@@ -185,6 +190,7 @@ class FluidSynthEngine:
         for name in (
             "fluid_synth_program_select",
             "fluid_synth_cc",
+            "fluid_synth_pitch_bend",
             "fluid_synth_noteon",
             "fluid_synth_noteoff",
         ):
@@ -203,6 +209,11 @@ class FluidSynthEngine:
                 ctypes.c_int,
                 ctypes.c_int,
             ]
+        library.fluid_synth_pitch_bend.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_int,
+            ctypes.c_int,
+        ]
         library.fluid_synth_noteoff.argtypes = [
             ctypes.c_void_p,
             ctypes.c_int,

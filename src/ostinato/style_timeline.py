@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
@@ -9,6 +10,8 @@ from typing import Any
 from ostinato.computer_audio import DEMO_STYLES, DemoArrangementRenderer, DemoSection
 from ostinato.sfz_audio import STYLE_SFZ_PROFILES
 from ostinato.style_designer import INSTRUMENTS, CustomStyle
+from ostinato.styles.live_audio import imported_style_playback_info
+from ostinato.styles.models import NoteEvent, Style, StyleTrackRole
 
 
 @dataclass(frozen=True, slots=True)
@@ -262,3 +265,87 @@ def custom_style_timeline(style: CustomStyle) -> dict[str, Any]:
             if float(event["start"]) < total_beats
         ]
     return timeline
+
+
+def imported_style_timeline(style: Style) -> dict[str, Any]:
+    """Describe the exact Variation 1 CV1 material used by live playback."""
+
+    info = imported_style_playback_info(style)
+    variation = info.sections["main"]
+    beats_per_bar = info.beats_per_bar
+    total_beats = variation.length_ticks / style.ticks_per_beat
+    phrase_bars = max(1, math.ceil(total_beats / beats_per_bar))
+    roles = {
+        "bass": {StyleTrackRole.BASS},
+        "comp": {StyleTrackRole.ACC1, StyleTrackRole.ACC2},
+        "fill": {StyleTrackRole.ACC3},
+        "backing": {StyleTrackRole.ACC4, StyleTrackRole.ACC5},
+        "drums": {StyleTrackRole.DRUM, StyleTrackRole.PERCUSSION},
+    }
+    lanes: list[dict[str, Any]] = []
+    bar_velocities: list[list[int]] = [[] for _ in range(phrase_bars)]
+    for lane in LANES:
+        tracks = [track for track in variation.tracks if track.role in roles[lane.id]]
+        notes = sorted(
+            (
+                event
+                for track in tracks
+                for event in track.events
+                if isinstance(event, NoteEvent)
+            ),
+            key=lambda event: (event.start_tick, event.note),
+        )
+        for note in notes:
+            bar = min(
+                phrase_bars - 1,
+                note.start_tick // (style.ticks_per_beat * beats_per_bar),
+            )
+            bar_velocities[bar].append(note.velocity)
+        programs = sorted(
+            {track.program for track in tracks if track.program is not None}
+        )
+        instrument = (
+            "GM percussion approximation"
+            if lane.id == "drums"
+            else (
+                "GM program " + ", ".join(str(program + 1) for program in programs)
+                if programs
+                else "Source role"
+            )
+        )
+        lanes.append(
+            {
+                "id": lane.id,
+                "label": lane.label,
+                "instrument": instrument,
+                "level": round(
+                    sum(note.velocity for note in notes) / len(notes) / 127 * 100
+                )
+                if notes
+                else 0,
+                "events": [
+                    {
+                        "start": round(note.start_tick / style.ticks_per_beat, 3),
+                        "duration": round(
+                            note.duration_ticks / style.ticks_per_beat, 3
+                        ),
+                        "intensity": note.velocity,
+                        "kind": lane.id,
+                    }
+                    for note in notes
+                ],
+            }
+        )
+    averages = [sum(values) / len(values) if values else 0 for values in bar_velocities]
+    maximum = max(averages, default=0) or 1
+    return {
+        "style_id": style.id,
+        "name": style.name,
+        "beats_per_bar": beats_per_bar,
+        "phrase_bars": phrase_bars,
+        "total_beats": total_beats,
+        "bar_dynamics": [round(value / maximum * 100) for value in averages],
+        "lanes": lanes,
+        "imported": True,
+        "playback_policy": "Variation 1 CV1 · Ostinato chord adaptation",
+    }

@@ -105,6 +105,14 @@ An attributed human-groove pack adds:
 - **Blues Shuffle** — 4/4 at 112 BPM, with triplet bass movement, shuffle
   comping, and responsive fills.
 
+The arranger's **Style group** selector separates built-ins, saved custom
+styles, and each imported KORG library. Choose the group first, then choose a
+style from the filtered **Style** selector. The deployed host-local library has
+105 deduplicated KORG styles across Volumes 1–7, Piano Styles, Real Drums, and
+Turkish Arabic World. Imported styles use the bounded five-section CV1 policy
+and a General MIDI listening approximation; they do not claim original KORG
+sounds or unavailable proprietary chord-transposition semantics.
+
 Choose **Style designer** while playback is stopped to make an editable style.
 Select a 2/4, 3/4, or 4/4 measure first; the designer then offers only rhythmic
 templates written for that meter instead of squeezing an incompatible pattern

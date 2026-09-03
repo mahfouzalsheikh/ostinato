@@ -9,6 +9,7 @@ services:
     user: "0:0"
     environment:
       OSTINATO_STATE_DIRECTORY: /var/lib/ostinato
+      OSTINATO_KORG_STYLE_DIRECTORY: /opt/ostinato-local-styles/korg
       OSTINATO_SOUNDFONT: ${OSTINATO_SOUNDFONT:-/usr/share/sounds/sf3/MuseScore_General_Full.sf3}
       OSTINATO_SOUNDFONT_NAME: ${OSTINATO_SOUNDFONT_NAME:-MuseScore General HQ}
       OSTINATO_LEGACY_SOUNDFONT: /usr/share/sounds/sf2/TimGM6mb.sf2
@@ -39,6 +40,10 @@ services:
       - type: volume
         source: ostinato-state
         target: /var/lib/ostinato
+      - type: bind
+        source: ./assets/styles/korg/converted
+        target: /opt/ostinato-local-styles/korg
+        read_only: true
     device_cgroup_rules:
       - "c 116:* rwm" # ALSA
       - "c 189:* rwm" # USB device filesystem

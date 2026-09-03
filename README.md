@@ -33,8 +33,9 @@ a separate channel.
 - Show a compact meter-aware beat indicator for 2/4, 3/4, and 4/4 styles.
 - Render all fourteen built-ins through genre-profiled sfizz racks of open
   multi-sampled piano, guitars, upright/electric basses, orchestral voices, and
-  live drums/percussion; custom styles retain their editable General MIDI
-  palette through FluidSynth and MuseScore General HQ.
+  live drums/percussion; 105 deduplicated host-local KORG imports and custom
+  styles use FluidSynth with the MuseScore General HQ General MIDI
+  approximation.
 - Build, preview, save, reopen, update, and delete custom styles without a
   frontend build tool or database.
 - Play accompaniment through direct ALSA hardware or host PipeWire sinks,
@@ -296,7 +297,8 @@ Do not commit machine-specific copies of these files.
 - [Pipenv development workflow](docs/development.md)
 - [Computer-only testing](docs/computer-only-testing.md)
 - [Style sources and licenses](docs/style-library-sources.md)
-- [Current verification evidence](docs/evidence/w31-open-sfz-builtins.md)
+- [Local KORG style import workspace](assets/styles/korg/README.md)
+- [Current live KORG library evidence](docs/evidence/w42-korg-library-groups-and-deduplication.md)
 - [Style-pack evidence and provenance boundary](docs/evidence/w25-licensed-groove-style-pack.md)
 
 ## License

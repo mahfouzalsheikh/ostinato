@@ -32,7 +32,12 @@ from ostinato.style_designer import (
     CustomStyleStore,
     default_custom_style_payload,
 )
-from ostinato.style_timeline import built_in_style_timeline, custom_style_timeline
+from ostinato.style_timeline import (
+    built_in_style_timeline,
+    custom_style_timeline,
+    imported_style_timeline,
+)
+from ostinato.styles.library import ImportedStyleLibrary, ImportedStyleLibraryError
 
 STATIC_DIRECTORY = Path(__file__).with_name("web_static")
 MidiNote = Annotated[int, Field(ge=0, le=127)]
@@ -192,6 +197,7 @@ def create_app(
     arranger_service: LiveArrangerService | None = None,
     audio_output_service: AudioOutputService | None = None,
     custom_style_store: CustomStyleStore | None = None,
+    imported_style_library: ImportedStyleLibrary | None = None,
 ) -> FastAPI:
     """Create an application with an injectable, hardware-free MIDI service."""
 
@@ -199,7 +205,16 @@ def create_app(
     profiles = profile_store or MidiProfileStore()
     audio_outputs = audio_output_service or AudioOutputService()
     custom_styles = custom_style_store or CustomStyleStore()
+    imported_library = imported_style_library or ImportedStyleLibrary()
     arranger = arranger_service or LiveArrangerService()
+    try:
+        imported_styles = {style.id: style for style in imported_library.load()}
+        arranger.configure_imported_styles(tuple(imported_styles.values()))
+        imported_style_error = None
+    except (ImportedStyleLibraryError, ArrangerError) as error:
+        imported_styles = {}
+        arranger.configure_imported_styles(())
+        imported_style_error = str(error)
     arranger_queue = midi.subscribe()
 
     async def monitor_arranger_input() -> None:
@@ -233,7 +248,7 @@ def create_app(
         arranger.configure_profile(profile)
         try:
             arranger.configure_custom_styles(custom_styles.load())
-        except CustomStyleError:
+        except (CustomStyleError, ArrangerError):
             arranger.configure_custom_styles(())
         try:
             output_status = audio_outputs.snapshot()
@@ -268,6 +283,8 @@ def create_app(
     app.state.arranger = arranger
     app.state.audio_output_service = audio_outputs
     app.state.custom_style_store = custom_styles
+    app.state.imported_style_library = imported_library
+    app.state.imported_style_error = imported_style_error
     app.mount("/assets", StaticFiles(directory=STATIC_DIRECTORY), name="assets")
 
     @app.get("/", include_in_schema=False)
@@ -276,7 +293,10 @@ def create_app(
 
     @app.get("/api/health")
     async def health() -> dict[str, str]:
-        return {"status": "ok"}
+        result = {"status": "ok"}
+        if imported_style_error is not None:
+            result["imported_styles"] = imported_style_error
+        return result
 
     @app.get("/api/midi/status")
     async def midi_status() -> dict[str, object]:
@@ -371,6 +391,9 @@ def create_app(
     async def style_timeline(identifier: str) -> dict[str, object]:
         if identifier in DEMO_STYLES:
             return built_in_style_timeline(identifier)
+        imported = imported_styles.get(identifier)
+        if imported is not None:
+            return imported_style_timeline(imported)
         try:
             style = next(
                 (item for item in custom_styles.load() if item.id == identifier), None

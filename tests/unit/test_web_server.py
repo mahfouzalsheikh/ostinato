@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,8 +18,12 @@ from ostinato.audio_output import (
 from ostinato.midi_profile import MidiProfileStore
 from ostinato.realtime_midi import MidiService
 from ostinato.style_designer import CustomStyleStore, default_custom_style_payload
+from ostinato.styles.library import ImportedStyleLibrary
+from ostinato.styles.models import style_to_dict
 from ostinato.web_server import create_app
 from tests.fake_midi import FakeMidiBackend
+from tests.unit.test_arranger import FakeArrangerAudio
+from tests.unit.test_imported_style_live import _style as imported_test_style
 
 
 class WebServerTests(unittest.TestCase):
@@ -52,6 +57,9 @@ class WebServerTests(unittest.TestCase):
                 self.profile_store,
                 audio_output_service=self.audio_output_service,
                 custom_style_store=self.custom_style_store,
+                imported_style_library=ImportedStyleLibrary(
+                    Path(self.temporary.name) / "imported-styles"
+                ),
             )
         )
         self.client = self.client_context.__enter__()
@@ -86,6 +94,7 @@ class WebServerTests(unittest.TestCase):
         self.assertIn('id="midi-wizard"', index.text)
         self.assertIn("Perform one labeled part at a time", index.text)
         self.assertIn('id="arranger-style"', index.text)
+        self.assertIn('id="arranger-style-group"', index.text)
         self.assertIn('id="arranger-intro"', index.text)
         self.assertIn('id="arranger-ending"', index.text)
         self.assertIn('id="arranger-fill-1"', index.text)
@@ -116,6 +125,7 @@ class WebServerTests(unittest.TestCase):
         self.assertEqual(app_script.status_code, 200)
         self.assertIn("scheduleDesignerPreviewRestart", app_script.text)
         self.assertIn("updateTimelinePlayhead", app_script.text)
+        self.assertIn('style.imported ? " · KORG"', app_script.text)
         self.assertNotIn("Press Restart to hear the update", app_script.text)
 
     def test_arranger_catalog_and_safe_stopped_controls_are_available(self) -> None:
@@ -156,11 +166,53 @@ class WebServerTests(unittest.TestCase):
             8,
         )
         self.assertTrue(all(style["description"] for style in initial.json()["styles"]))
+        self.assertTrue(
+            all(
+                style["group"] == "Built-in styles"
+                for style in initial.json()["styles"]
+            )
+        )
         self.assertEqual(selected.json()["style"], "classic_waltz")
         self.assertEqual(selected.json()["tempo_bpm"], 96)
         self.assertEqual(selected.json()["ticks_per_beat"], 96)
         self.assertIsNone(selected.json()["beat_index"])
         self.assertIs(synced.json()["sync_enabled"], True)
+
+    def test_local_import_is_available_in_catalog_selection_and_timeline(self) -> None:
+        imported_root = Path(self.temporary.name) / "local-imports"
+        document = imported_root / "korg-test" / "style.json"
+        document.parent.mkdir(parents=True)
+        document.write_text(
+            json.dumps(style_to_dict(imported_test_style())), encoding="utf-8"
+        )
+        app = create_app(
+            MidiService(FakeMidiBackend()),
+            MidiProfileStore(Path(self.temporary.name) / "import-profile.json"),
+            arranger_service=LiveArrangerService(FakeArrangerAudio()),
+            audio_output_service=self.audio_output_service,
+            custom_style_store=self.custom_style_store,
+            imported_style_library=ImportedStyleLibrary(imported_root),
+        )
+
+        with TestClient(app) as client:
+            status = client.get("/api/arranger/status").json()
+            selected = client.post(
+                "/api/arranger/command",
+                json={"action": "style", "value": "korg-test"},
+            )
+            timeline = client.get("/api/styles/korg-test/timeline")
+
+        imported = next(
+            style for style in status["styles"] if style["id"] == "korg-test"
+        )
+        self.assertIs(imported["imported"], True)
+        self.assertEqual(imported["group"], "KORG · Other imports")
+        self.assertEqual(selected.json()["style"], "korg-test")
+        self.assertEqual(timeline.status_code, 200)
+        self.assertEqual(
+            timeline.json()["playback_policy"],
+            "Variation 1 CV1 · Ostinato chord adaptation",
+        )
 
     def test_arranger_fixed_tempo_control_validates_and_updates_status(self) -> None:
         fixed = self.client.post(

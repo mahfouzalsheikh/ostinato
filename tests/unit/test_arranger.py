@@ -16,6 +16,8 @@ from ostinato.arranger import (
 from ostinato.computer_audio import TRANSPORT_TICKS_PER_BEAT, DemoSection
 from ostinato.domain import ChordQuality, ChordState
 from ostinato.style_designer import CustomStyle, default_custom_style_payload
+from ostinato.styles.models import Style
+from tests.unit.test_imported_style_live import _style as imported_test_style
 
 
 class FakeArrangerAudio:
@@ -32,16 +34,21 @@ class FakeArrangerAudio:
         self.error: str | None = None
         self.position_ticks: int | None = 0
         self.custom_style: CustomStyle | None = None
+        self.imported_style: Style | None = None
 
     @property
     def section(self) -> DemoSection:
         return self._section
 
     def select_style(
-        self, style_id: str, custom_style: CustomStyle | None = None
+        self,
+        style_id: str,
+        custom_style: CustomStyle | None = None,
+        imported_style: Style | None = None,
     ) -> None:
         self.style = style_id
         self.custom_style = custom_style
+        self.imported_style = imported_style
 
     def set_tempo(self, tempo_bpm: int) -> None:
         self.tempo = tempo_bpm
@@ -437,6 +444,25 @@ class LiveArrangerServiceTests(unittest.TestCase):
         self.assertTrue(
             next(style for style in styles if style["id"] == custom.id)["custom"]
         )
+
+    def test_local_import_is_selectable_and_exposes_its_meter_and_policy(self) -> None:
+        imported = imported_test_style()
+        self.arranger.configure_imported_styles((imported,))
+
+        status = self.arranger.command("style", imported.id)
+
+        self.assertEqual(status["style"], imported.id)
+        self.assertEqual(status["beats_per_bar"], 2)
+        self.assertEqual(self.audio.style, imported.id)
+        self.assertEqual(self.audio.imported_style, imported)
+        styles = cast(list[dict[str, object]], status["styles"])
+        catalog_item = next(style for style in styles if style["id"] == imported.id)
+        self.assertIs(catalog_item["imported"], True)
+        self.assertEqual(catalog_item["group"], "KORG · Other imports")
+        description = catalog_item["description"]
+        self.assertIsInstance(description, str)
+        assert isinstance(description, str)
+        self.assertIn("Ostinato chord adaptation", description)
 
     def test_unsaved_preview_uses_independent_tempo_and_restores_audio(self) -> None:
         value = default_custom_style_payload("classic_waltz")

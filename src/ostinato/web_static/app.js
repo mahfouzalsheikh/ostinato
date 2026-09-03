@@ -1,5 +1,6 @@
 import "./fr4x-accordion.js?v=11";
 import { projectedBeatIndex } from "./arranger-clock.js?v=1";
+import { groupForStyle, styleGroups, stylesInGroup } from "./style-groups.js?v=1";
 
 const $ = (selector) => document.querySelector(selector);
 const accordion = $("#accordion");
@@ -12,6 +13,7 @@ const outputSelect = $("#midi-output");
 const eventList = $("#event-list");
 const readout = $("#transport-readout");
 const wizard = $("#midi-wizard");
+const arrangerStyleGroup = $("#arranger-style-group");
 const arrangerStyle = $("#arranger-style");
 const arrangerMessage = $("#arranger-message");
 const fixedTempo = $("#arranger-fixed-tempo");
@@ -68,6 +70,8 @@ let designerDeleteArmed = false;
 let designerPreviewing = false;
 let designerPreviewRestartTimer = null;
 let liveTimelineStyleId = null;
+let browsingStyleGroup = null;
+let lastArrangerStyleId = null;
 const styleTimelineCache = new Map();
 
 const DESIGNER_PREVIEW_RESTART_DELAY_MS = 180;
@@ -180,17 +184,20 @@ async function arrangerCommand(action, value = null) {
 function renderArrangerStatus(status) {
   arrangerStatus = status;
   beatClock = { status, sampledAtMilliseconds: performance.now() };
-  const optionSignature = status.styles.map((style) => style.id).join(":");
-  if (arrangerStyle.dataset.options !== optionSignature) {
-    arrangerStyle.replaceChildren(...status.styles.map((style) => {
-      const suffix = style.custom ? " · Custom" : "";
-      const option = new Option(`${style.name} · ${style.beats_per_bar}/4${suffix}`, style.id);
-      option.title = style.description ?? "";
-      return option;
-    }));
-    arrangerStyle.dataset.options = optionSignature;
+  const groups = styleGroups(status.styles);
+  const groupSignature = groups.join(":");
+  if (arrangerStyleGroup.dataset.options !== groupSignature) {
+    arrangerStyleGroup.replaceChildren(...groups.map((group) => new Option(group, group)));
+    arrangerStyleGroup.dataset.options = groupSignature;
   }
-  arrangerStyle.value = status.style;
+  if (lastArrangerStyleId !== status.style) {
+    browsingStyleGroup = groupForStyle(status.styles, status.style);
+    lastArrangerStyleId = status.style;
+  }
+  if (!groups.includes(browsingStyleGroup)) browsingStyleGroup = groups[0] ?? null;
+  arrangerStyleGroup.value = browsingStyleGroup ?? "";
+  populateArrangerStyles(status.styles, browsingStyleGroup, status.style);
+  arrangerStyleGroup.disabled = status.running;
   arrangerStyle.disabled = status.running;
   $("#open-style-designer").disabled = status.running;
   $("#arranger-tempo").textContent = status.tempo_bpm;
@@ -238,6 +245,21 @@ function renderArrangerStatus(status) {
   } else {
     setArrangerMessage("Bass tempo is style-normalized. Switch to Fixed if you do not want strokes to change it.");
   }
+}
+
+function populateArrangerStyles(styles, group, selectedId = null) {
+  const groupedStyles = stylesInGroup(styles, group);
+  const optionSignature = `${group}:${groupedStyles.map((style) => style.id).join(":")}`;
+  if (arrangerStyle.dataset.options !== optionSignature) {
+    arrangerStyle.replaceChildren(...groupedStyles.map((style) => {
+      const suffix = style.custom ? " · Custom" : (style.imported ? " · KORG" : "");
+      const option = new Option(`${style.name} · ${style.beats_per_bar}/4${suffix}`, style.id);
+      option.title = style.description ?? "";
+      return option;
+    }));
+    arrangerStyle.dataset.options = optionSignature;
+  }
+  if (groupedStyles.some((style) => style.id === selectedId)) arrangerStyle.value = selectedId;
 }
 
 function renderStyleTimeline(root, timeline) {
@@ -1114,6 +1136,10 @@ accordion.addEventListener("unmapped-button", () => {
   showMessage("That visual button has no MIDI note observed by the setup wizard.", true);
 });
 
+arrangerStyleGroup.addEventListener("change", () => {
+  browsingStyleGroup = arrangerStyleGroup.value;
+  populateArrangerStyles(arrangerStatus?.styles ?? [], browsingStyleGroup);
+});
 arrangerStyle.addEventListener("change", () => arrangerCommand("style", arrangerStyle.value));
 $("#open-style-designer").addEventListener("click", openStyleDesigner);
 $("[data-close-style-designer]").addEventListener("click", closeStyleDesigner);

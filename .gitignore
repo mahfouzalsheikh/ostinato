@@ -12,3 +12,14 @@ build/
 .playwright-mcp/
 linkedin-article.md
 linkedin-post.md
+
+# User-supplied KORG style material and generated local derivatives.
+assets/styles/korg/downloads/**
+!assets/styles/korg/downloads/README.md
+assets/styles/korg/extracted/**
+assets/styles/korg/midi/**
+assets/styles/korg/candidates/**
+assets/styles/korg/duplicates/**
+assets/styles/korg/converted/**
+!assets/styles/korg/converted/.gitkeep
+assets/styles/korg/style_inventory.json
