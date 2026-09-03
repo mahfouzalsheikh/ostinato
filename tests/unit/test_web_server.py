@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import tempfile
 import unittest
@@ -20,7 +21,7 @@ from ostinato.realtime_midi import MidiService
 from ostinato.style_designer import CustomStyleStore, default_custom_style_payload
 from ostinato.styles.library import ImportedStyleLibrary
 from ostinato.styles.models import style_to_dict
-from ostinato.web_server import create_app
+from ostinato.web_server import _drain_arranger_events, create_app
 from tests.fake_midi import FakeMidiBackend
 from tests.unit.test_arranger import FakeArrangerAudio
 from tests.unit.test_imported_style_live import _style as imported_test_style
@@ -127,6 +128,21 @@ class WebServerTests(unittest.TestCase):
         self.assertIn("updateTimelinePlayhead", app_script.text)
         self.assertIn('style.imported ? " · KORG"', app_script.text)
         self.assertNotIn("Press Restart to hear the update", app_script.text)
+
+    def test_arranger_drains_buffered_midi_before_advancing_deadlines(self) -> None:
+        arranger = create_autospec(LiveArrangerService, instance=True)
+        queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+        events = [{"type": "midi", "note": note} for note in (48, 52, 55)]
+        queue.put_nowait(events[1])
+        queue.put_nowait(events[2])
+
+        _drain_arranger_events(arranger, queue, events[0])
+
+        self.assertEqual(
+            [call.args[0] for call in arranger.handle_midi_event.call_args_list],
+            events,
+        )
+        self.assertTrue(queue.empty())
 
     def test_arranger_catalog_and_safe_stopped_controls_are_available(self) -> None:
         initial = self.client.get("/api/arranger/status")

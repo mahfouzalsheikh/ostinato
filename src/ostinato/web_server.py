@@ -191,6 +191,22 @@ class StylePreviewPayload(BaseModel):
     tempo_bpm: int = Field(ge=40, le=240)
 
 
+def _drain_arranger_events(
+    arranger: LiveArrangerService,
+    queue: asyncio.Queue[dict[str, object]],
+    first_event: dict[str, object],
+) -> None:
+    """Consume one wakeup and all MIDI events already buffered behind it."""
+
+    arranger.handle_midi_event(first_event)
+    while True:
+        try:
+            event = queue.get_nowait()
+        except asyncio.QueueEmpty:
+            return
+        arranger.handle_midi_event(event)
+
+
 def create_app(
     service: MidiService | None = None,
     profile_store: MidiProfileStore | None = None,
@@ -224,7 +240,7 @@ def create_app(
                     arranger_queue.get(),
                     timeout=arranger.next_check_delay_seconds(),
                 )
-                arranger.handle_midi_event(event)
+                _drain_arranger_events(arranger, arranger_queue, event)
             except TimeoutError:
                 pass
             arranger.advance()

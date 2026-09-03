@@ -5,6 +5,7 @@ from typing import cast
 
 from ostinato.arranger import (
     CHORD_COALESCE_NS,
+    CHORD_MAX_COALESCE_NS,
     STYLE_PREVIEW_DURATION_NS,
     ArrangerError,
     BassTempoTracker,
@@ -115,6 +116,22 @@ class ChordClassifierTests(unittest.TestCase):
         self.assertEqual(d_mode_minor.root_pitch_class, 0)
         self.assertEqual(d_mode_minor.quality, ChordQuality.MINOR)
         self.assertEqual(d_mode_minor.transmission, "d-mode")
+
+    def test_note_clusters_accept_inversions_and_octave_doubling(self) -> None:
+        major = classify_chord_notes([55, 60, 64, 72])
+        seventh_without_fifth = classify_chord_notes([58, 60, 64, 72])
+
+        assert major is not None
+        self.assertEqual(
+            (major.root_pitch_class, major.quality),
+            (0, ChordQuality.MAJOR),
+        )
+        assert seventh_without_fifth is not None
+        self.assertEqual(
+            (seventh_without_fifth.root_pitch_class, seventh_without_fifth.quality),
+            (0, ChordQuality.DOMINANT_SEVENTH),
+        )
+        self.assertIsNone(classify_chord_notes([48, 49, 52, 55]))
 
     def test_prediction_distinguishes_new_root_from_alternating_bass_by_meter(
         self,
@@ -260,19 +277,39 @@ class LiveArrangerServiceTests(unittest.TestCase):
         self.assertEqual(status["tempo_bpm"], 120)
         self.assertEqual(status["tempo_source"], "left hand · chords")
 
-    def test_chord_deadline_is_measured_from_first_not_last_cluster_note(self) -> None:
+    def test_chord_deadline_extends_from_the_latest_cluster_note(self) -> None:
         for note, timestamp in (
             (48, 0),
-            (52, 2_000_000),
-            (55, 4_000_000),
+            (52, 4_000_000),
+            (55, 8_000_000),
         ):
             self.arranger.handle_midi_event(midi_event(3, note, timestamp))
 
-        status = self.arranger.advance(CHORD_COALESCE_NS)
+        still_pending = self.arranger.advance(CHORD_COALESCE_NS)
+        status = self.arranger.advance(8_000_000 + CHORD_COALESCE_NS)
 
+        self.assertIsNone(still_pending["chord"])
         self.assertEqual(status["chord"], "C")
         assert self.audio.chord is not None
-        self.assertEqual(self.audio.chord.recognized_at_ns, CHORD_COALESCE_NS)
+        self.assertEqual(
+            self.audio.chord.recognized_at_ns,
+            8_000_000 + CHORD_COALESCE_NS,
+        )
+
+    def test_chord_cluster_has_a_bounded_maximum_wait(self) -> None:
+        for note, timestamp in (
+            (48, 0),
+            (52, 8_000_000),
+            (55, 16_000_000),
+            (58, 23_000_000),
+        ):
+            self.arranger.handle_midi_event(midi_event(3, note, timestamp))
+
+        status = self.arranger.advance(CHORD_MAX_COALESCE_NS)
+
+        self.assertEqual(status["chord"], "C7")
+        assert self.audio.chord is not None
+        self.assertEqual(self.audio.chord.recognized_at_ns, CHORD_MAX_COALESCE_NS)
 
     def test_monitor_wait_tracks_chord_deadline_without_busy_polling(self) -> None:
         self.assertEqual(self.arranger.next_check_delay_seconds(now_ns=0), 0.05)
@@ -284,7 +321,7 @@ class LiveArrangerServiceTests(unittest.TestCase):
         )
         self.assertEqual(
             self.arranger.next_check_delay_seconds(now_ns=4_000_000),
-            0.003,
+            0.009,
         )
 
     def test_new_chord_cluster_ignores_notes_still_held_from_previous_chord(

@@ -35,6 +35,9 @@ test("normal chord-note transmission identifies common Stradella qualities", () 
   assert.equal(classifyChordNotes([48, 51, 55]).quality, "minor");
   assert.equal(classifyChordNotes([48, 52, 55, 58]).quality, "seventh");
   assert.equal(classifyChordNotes([48, 51, 54], 0).quality, "diminished");
+  assert.equal(classifyChordNotes([55, 60, 64, 72]).quality, "major");
+  assert.equal(classifyChordNotes([58, 60, 64, 72]).quality, "seventh");
+  assert.equal(classifyChordNotes([48, 49, 52, 55]), null);
 });
 
 test("documented D-Mode chord codes are supported", () => {

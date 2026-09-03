@@ -73,9 +73,35 @@ export function stradellaBassButtonsForPitch(pitchClass, chordRootPitchClass = n
   return [candidates.fundamental, candidates.counterbass];
 }
 
-function samePitchClasses(actual, expected) {
-  return actual.size === expected.length
-    && expected.every((pitchClass) => actual.has(pitchClass));
+const CHORD_PATTERNS = [
+  { quality: "seventh", intervals: [0, 4, 7, 10] },
+  { quality: "seventh", intervals: [0, 4, 10] },
+  { quality: "diminished", intervals: [0, 3, 6, 9] },
+  { quality: "diminished", intervals: [0, 3, 6] },
+  { quality: "major", intervals: [0, 4, 7] },
+  { quality: "minor", intervals: [0, 3, 7] },
+];
+
+function pitchClassMask(notes) {
+  return notes.reduce((mask, note) => mask | (1 << (note % 12)), 0);
+}
+
+const CLASSIFIED_CHORDS = new Map();
+for (const [priority, pattern] of CHORD_PATTERNS.entries()) {
+  for (let rootPitchClass = 0; rootPitchClass < 12; rootPitchClass += 1) {
+    const mask = pitchClassMask(
+      pattern.intervals.map((interval) => rootPitchClass + interval),
+    );
+    const existing = CLASSIFIED_CHORDS.get(mask);
+    if (existing && existing.priority !== priority) continue;
+    const entry = existing ?? { priority, chords: [] };
+    entry.chords.push({
+      rootPitchClass,
+      quality: pattern.quality,
+      transmission: "notes",
+    });
+    CLASSIFIED_CHORDS.set(mask, entry);
+  }
 }
 
 export function classifyChordNotes(notes, preferredRoot = null) {
@@ -87,27 +113,8 @@ export function classifyChordNotes(notes, preferredRoot = null) {
     return { rootPitchClass: offset % 12, quality, transmission: "d-mode" };
   }
 
-  const actual = new Set(valid.map((note) => note % 12));
-  const roots = [...Array(12).keys()];
-  if (preferredRoot != null && roots.includes(preferredRoot)) {
-    roots.splice(roots.indexOf(preferredRoot), 1);
-    roots.unshift(preferredRoot);
-  }
-  const patterns = [
-    { quality: "seventh", intervals: [0, 4, 7, 10] },
-    { quality: "seventh", intervals: [0, 4, 10] },
-    { quality: "diminished", intervals: [0, 3, 6, 9] },
-    { quality: "diminished", intervals: [0, 3, 6] },
-    { quality: "major", intervals: [0, 4, 7] },
-    { quality: "minor", intervals: [0, 3, 7] },
-  ];
-  for (const pattern of patterns) {
-    for (const root of roots) {
-      const expected = pattern.intervals.map((interval) => (root + interval) % 12);
-      if (samePitchClasses(actual, expected)) {
-        return { rootPitchClass: root, quality: pattern.quality, transmission: "notes" };
-      }
-    }
-  }
-  return null;
+  const entry = CLASSIFIED_CHORDS.get(pitchClassMask(valid));
+  if (!entry) return null;
+  return entry.chords.find((chord) => chord.rootPitchClass === preferredRoot)
+    ?? entry.chords[0];
 }

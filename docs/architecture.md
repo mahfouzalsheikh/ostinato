@@ -107,7 +107,13 @@ last confirmed chord against chords rooted on the new bass using metrical
 position, circle-of-fifths movement, active melody compatibility, and a short
 recent-melody window. The provisional chord reaches the renderer immediately.
 A chord-button cluster remains authoritative and confirms or corrects the
-prediction after its bounded coalescing delay.
+prediction after its bounded coalescing delay. The backend waits for 12 ms of
+quiet after the latest chord note rather than measuring only from the first
+note, while a 24 ms cap prevents a malformed stream from postponing recognition
+indefinitely. Exact chord-note lookup and prediction scoring use precomputed
+12-bit pitch-class masks in the live path. Already-buffered MIDI events are
+drained before wall-clock deadlines are evaluated, so temporary event-loop load
+does not split a cluster that has already reached the service.
 
 This predictor is a deterministic, replaceable first layer rather than a
 trained model. It has no external inference runtime and evaluates only five

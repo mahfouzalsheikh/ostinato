@@ -252,11 +252,13 @@ complete bars without another left-hand note-on, using the selected style's
 meter and current tempo. The grace period prevents ordinary detached bass
 playing from stopping accompaniment between strokes.
 
-Chord-channel events are grouped for 12 ms and decoded using normal chord-note
-clusters or the documented FR-4X D-Mode ranges. The service uses only the bass
-and chord channels reviewed in the saved setup profile. Representative H1
-fixtures and physical musical-feel verification remain pending, so this is not
-yet production FR-4X recognition evidence.
+Chord-channel events are grouped until 12 ms after the latest note, capped at
+24 ms from the first note, and decoded using normal chord-note clusters or the
+documented FR-4X D-Mode ranges. This keeps staggered notes in one cluster while
+bounding recognition latency. The service uses only the bass and chord channels
+reviewed in the saved setup profile. Representative H1 fixtures and physical
+musical-feel verification remain pending, so this is not yet production FR-4X
+recognition evidence.
 
 ## Visualize the 39-key piano surface
 

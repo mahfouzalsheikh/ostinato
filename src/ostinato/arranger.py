@@ -52,7 +52,8 @@ from ostinato.styles.live_audio import (
 from ostinato.styles.models import Style
 
 JsonObject = dict[str, object]
-CHORD_COALESCE_NS = 6_000_000
+CHORD_COALESCE_NS = 12_000_000
+CHORD_MAX_COALESCE_NS = 24_000_000
 MIN_LEFT_HAND_ATTACK_GAP_NS = 110_000_000
 SYNC_STOP_BARS = 2
 STYLE_PREVIEW_DURATION_NS = 30_000_000_000
@@ -90,6 +91,42 @@ _CHORD_INTERVALS: dict[ChordQuality, tuple[int, ...]] = {
     ChordQuality.DIMINISHED: (0, 3, 6),
 }
 
+_CHORD_QUALITY_PRIORS = {
+    ChordQuality.MAJOR: 0.4,
+    ChordQuality.MINOR: 0.3,
+    ChordQuality.DOMINANT_SEVENTH: 0.1,
+    ChordQuality.DIMINISHED: -0.4,
+}
+
+
+def _pitch_class_mask(root: int, intervals: Sequence[int]) -> int:
+    mask = 0
+    for interval in intervals:
+        mask |= 1 << ((root + interval) % 12)
+    return mask
+
+
+_CHORD_TONE_MASKS = {
+    (root, quality): _pitch_class_mask(root, intervals)
+    for root in range(12)
+    for quality, intervals in _CHORD_INTERVALS.items()
+}
+
+_CLASSIFIED_CHORDS: dict[int, RecognizedChord] = {}
+for _quality, _intervals in (
+    (ChordQuality.DOMINANT_SEVENTH, (0, 4, 7, 10)),
+    (ChordQuality.DOMINANT_SEVENTH, (0, 4, 10)),
+    (ChordQuality.DIMINISHED, (0, 3, 6, 9)),
+    (ChordQuality.DIMINISHED, (0, 3, 6)),
+    (ChordQuality.MAJOR, (0, 4, 7)),
+    (ChordQuality.MINOR, (0, 3, 7)),
+):
+    for _root in range(12):
+        _CLASSIFIED_CHORDS.setdefault(
+            _pitch_class_mask(_root, _intervals),
+            RecognizedChord(_root, _quality, "notes"),
+        )
+
 
 def classify_chord_notes(notes: Sequence[int]) -> RecognizedChord | None:
     """Classify normal chord clusters and documented FR-4X D-Mode codes."""
@@ -107,22 +144,10 @@ def classify_chord_notes(notes: Sequence[int]) -> RecognizedChord | None:
         )
         return RecognizedChord(offset % 12, qualities[offset // 12], "d-mode")
 
-    actual = {note % 12 for note in valid}
-    roots = list(range(12))
-    patterns = (
-        (ChordQuality.DOMINANT_SEVENTH, (0, 4, 7, 10)),
-        (ChordQuality.DOMINANT_SEVENTH, (0, 4, 10)),
-        (ChordQuality.DIMINISHED, (0, 3, 6, 9)),
-        (ChordQuality.DIMINISHED, (0, 3, 6)),
-        (ChordQuality.MAJOR, (0, 4, 7)),
-        (ChordQuality.MINOR, (0, 3, 7)),
-    )
-    for quality, intervals in patterns:
-        for root in roots:
-            expected = {(root + interval) % 12 for interval in intervals}
-            if actual == expected:
-                return RecognizedChord(root, quality, "notes")
-    return None
+    actual_mask = 0
+    for note in valid:
+        actual_mask |= 1 << (note % 12)
+    return _CLASSIFIED_CHORDS.get(actual_mask)
 
 
 def predict_harmony(
@@ -143,22 +168,26 @@ def predict_harmony(
 
     if not 0 <= bass_pitch_class <= 11:
         raise ValueError("bass_pitch_class must be between 0 and 11")
-    active_pitch_classes = {note % 12 for note in active_melody_notes}
-    recent_pitch_classes = tuple(note % 12 for note in recent_melody_notes)
-    candidates = {(bass_pitch_class, quality) for quality in ChordQuality}
+    active_mask = 0
+    for note in active_melody_notes:
+        active_mask |= 1 << (note % 12)
+    active_count = active_mask.bit_count()
+    recent_counts = [0] * 12
+    for note in recent_melody_notes:
+        recent_counts[note % 12] += 1
+    recent_count = len(recent_melody_notes)
+
+    candidates = [(bass_pitch_class, quality) for quality in ChordQuality]
     if previous_chord is not None:
-        candidates.add((previous_chord.root_pitch_class, previous_chord.quality))
+        previous = (previous_chord.root_pitch_class, previous_chord.quality)
+        if previous not in candidates:
+            candidates.append(previous)
 
     scored: list[tuple[float, int, int, int, ChordQuality]] = []
-    quality_prior = {
-        ChordQuality.MAJOR: 0.4,
-        ChordQuality.MINOR: 0.3,
-        ChordQuality.DOMINANT_SEVENTH: 0.1,
-        ChordQuality.DIMINISHED: -0.4,
-    }
     for root, quality in candidates:
-        tones = {(root + interval) % 12 for interval in _CHORD_INTERVALS[quality]}
-        score = quality_prior[quality]
+        intervals = _CHORD_INTERVALS[quality]
+        tone_mask = _CHORD_TONE_MASKS[root, quality]
+        score = _CHORD_QUALITY_PRIORS[quality]
         same_as_previous = (
             previous_chord is not None
             and root == previous_chord.root_pitch_class
@@ -181,20 +210,25 @@ def predict_harmony(
                 score += 0.4
         if root == bass_pitch_class:
             score += 2.5 if harmonic_boundary else 0.25
-        elif bass_pitch_class in tones:
+        elif tone_mask & (1 << bass_pitch_class):
             score += 0.75 if harmonic_boundary else 1.75
         else:
             score -= 2.0
-        for pitch_class in active_pitch_classes:
-            score += 3.0 if pitch_class in tones else -2.0
-        for pitch_class in recent_pitch_classes:
-            score += 0.12 if pitch_class in tones else -0.04
-        if (
-            quality is ChordQuality.DOMINANT_SEVENTH
-            and (root + 10) % 12 in active_pitch_classes
+        matching_active_count = (active_mask & tone_mask).bit_count()
+        score += (3.0 * matching_active_count) - (
+            2.0 * (active_count - matching_active_count)
+        )
+        matching_recent_count = sum(
+            recent_counts[(root + interval) % 12] for interval in intervals
+        )
+        score += (0.12 * matching_recent_count) - (
+            0.04 * (recent_count - matching_recent_count)
+        )
+        if quality is ChordQuality.DOMINANT_SEVENTH and active_mask & (
+            1 << ((root + 10) % 12)
         ):
             score += 1.0
-        scored.append((score, int(same_as_previous), -len(tones), -root, quality))
+        scored.append((score, int(same_as_previous), -len(intervals), -root, quality))
 
     scored.sort(reverse=True)
     best_score, _continuity, _complexity, negative_root, best_quality = scored[0]
@@ -641,6 +675,7 @@ class LiveArrangerService:
         self._rhythm_tracker = BassTempoTracker()
         self._auto_tempo_sources: set[str] = set()
         self._chord_coalesce_ns = chord_coalesce_ns
+        self._chord_max_coalesce_ns = max(CHORD_MAX_COALESCE_NS, chord_coalesce_ns)
         self._treble_channel: int | None = None
         self._bass_channel: int | None = None
         self._chord_channel: int | None = None
@@ -648,6 +683,7 @@ class LiveArrangerService:
         self._recent_melody_notes: deque[int] = deque(maxlen=RECENT_MELODY_NOTE_COUNT)
         self._active_chord_notes: set[int] = set()
         self._pending_chord_notes: set[int] = set()
+        self._chord_started_at_ns: int | None = None
         self._chord_dirty_at_ns: int | None = None
         self._last_bass_pitch_class: int | None = None
         self._chord: ChordState | None = None
@@ -720,6 +756,7 @@ class LiveArrangerService:
         self._recent_melody_notes.clear()
         self._active_chord_notes.clear()
         self._pending_chord_notes.clear()
+        self._chord_started_at_ns = None
         self._chord_dirty_at_ns = None
         self._last_bass_pitch_class = None
         self._prediction_bass_pitch_class = None
@@ -838,8 +875,11 @@ class LiveArrangerService:
                 self._resolve_chord_cluster(timestamp_value)
                 if self._chord_dirty_at_ns is None:
                     self._pending_chord_notes.clear()
+                    self._chord_started_at_ns = timestamp_value
                     self._chord_dirty_at_ns = timestamp_value
                     self._observe_left_hand_pulse(timestamp_value, "chords")
+                else:
+                    self._chord_dirty_at_ns = timestamp_value
                 self._active_chord_notes.add(note_value)
                 self._pending_chord_notes.add(note_value)
                 self._register_sync_activity(timestamp_value)
@@ -888,8 +928,9 @@ class LiveArrangerService:
             raise ValueError("idle_seconds must be positive")
         now = self._clock() if now_ns is None else now_ns
         deadlines: list[int] = []
-        if self._chord_dirty_at_ns is not None:
-            deadlines.append(self._chord_dirty_at_ns + self._chord_coalesce_ns)
+        chord_deadline = self._chord_deadline_ns()
+        if chord_deadline is not None:
+            deadlines.append(chord_deadline)
         if self._running and self._sync_stop_at_ns is not None:
             deadlines.append(self._sync_stop_at_ns)
         if self._style_previewing and self._preview_stop_at_ns is not None:
@@ -1198,10 +1239,12 @@ class LiveArrangerService:
             self._audio.set_tempo(tempo)
 
     def _resolve_chord_cluster(self, now_ns: int) -> None:
-        dirty_at = self._chord_dirty_at_ns
-        if dirty_at is None or now_ns - dirty_at < self._chord_coalesce_ns:
+        started_at = self._chord_started_at_ns
+        deadline = self._chord_deadline_ns()
+        if started_at is None or deadline is None or now_ns < deadline:
             return
         notes = sorted(self._pending_chord_notes)
+        self._chord_started_at_ns = None
         self._chord_dirty_at_ns = None
         self._pending_chord_notes.clear()
         recognized = classify_chord_notes(notes)
@@ -1212,7 +1255,7 @@ class LiveArrangerService:
             quality=recognized.quality,
             bass_pitch_class=None,
             confidence=1.0,
-            source_event_ids=(f"live-{recognized.transmission}-{dirty_at}",),
+            source_event_ids=(f"live-{recognized.transmission}-{started_at}",),
             recognized_at_ns=now_ns,
         )
         self._chord = chord
@@ -1221,6 +1264,16 @@ class LiveArrangerService:
         self._harmony_source = "chord button"
         self._prediction_confidence = None
         self._audio.set_chord(chord)
+
+    def _chord_deadline_ns(self) -> int | None:
+        started_at = self._chord_started_at_ns
+        dirty_at = self._chord_dirty_at_ns
+        if started_at is None or dirty_at is None:
+            return None
+        return min(
+            dirty_at + self._chord_coalesce_ns,
+            started_at + self._chord_max_coalesce_ns,
+        )
 
     def _apply_harmony_prediction(
         self, bass_pitch_class: int, timestamp_ns: int
