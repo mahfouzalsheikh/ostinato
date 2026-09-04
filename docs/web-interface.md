@@ -44,6 +44,40 @@ is reported and never replaced with a different device automatically. The
 input can still reconnect when an optional saved output is absent. Run the
 wizard again after changing the instrument's MIDI transmission setup.
 
+## Learn accordion performance controls
+
+After saving the MIDI profile and connecting its exact input, choose
+**Performance controls**. Six independent rows can learn **Intro**,
+**Fill In 1**, **Fill In 2**, **Ending**, **Start**, and **Stop**:
+
+1. Choose **Learn** beside one action.
+2. Press its assigned accordion function switch once.
+3. Wait for the hexadecimal fingerprint to appear, then repeat for other
+   actions and choose **Save controls**.
+
+The learner stores exactly what arrives from the selected input: one complete
+MIDI message or a bounded sequence of up to eight messages emitted within 400
+milliseconds. It does not guess a Roland channel, controller, or proprietary
+encoding. Note on/off, polyphonic and channel pressure, pitch bend, MIDI clock,
+active sensing, and bellows expression CC11 cannot be learned. These exclusions
+keep musical performance and bellow movement out of the command path.
+
+Bindings are validated so two actions cannot have the same fingerprint or
+ambiguous sequence endings. At runtime, matching is backend-owned, scoped to
+the exact saved input port, and debounced per action. Learning temporarily
+suspends dispatch for that browser connection, so the switch being captured
+does not also operate the arranger. A browser reload does not disable already
+saved controls.
+
+Roland documents six bass-side function switches and assignable Start/Stop,
+Intro, Fill, and Ending functions in the
+[FR-4X Reference Manual](https://static.roland.com/assets/media/pdf/FR-4x_reference_e01_W.pdf).
+Enabling that mode repurposes the bass-button column nearest the logo, so the
+performer must accept that physical-layout tradeoff. The published
+[FR-4X MIDI Implementation](https://static.roland.com/assets/media/pdf/FR-4x_MIDI_Implementation_e01_W.pdf)
+documents MIDI Start and Stop transmission, but Ostinato still learns every
+action from observed input rather than assuming bytes for the other functions.
+
 ## Control the live arranger
 
 The arranger panel controls a backend-owned PCM accompaniment process.
@@ -327,6 +361,7 @@ layout choice before their different row geometry can be displayed safely.
 | `GET /api/midi/profile` | Load the saved, versioned detection profile |
 | `PUT /api/midi/profile` | Validate and atomically save a reviewed profile |
 | `DELETE /api/midi/profile` | Remove the saved profile |
+| `PUT /api/midi/performance-controls` | Validate and save learned action fingerprints with the current profile |
 | `GET /api/arranger/status` | Style, tempo, harmony, section, and sync state |
 | `POST /api/arranger/command` | Apply one validated local arranger control |
 | `GET /api/audio/outputs` | List exact PipeWire/direct-ALSA routes and saved state |

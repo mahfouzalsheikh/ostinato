@@ -30,6 +30,9 @@ a separate channel.
 - Start a main section, play a style-shaped four-bar intro, trigger either of
   two next-measure Fill Ins, queue a four-bar ending, or use left-hand
   start/stop sync.
+- Learn exact MIDI messages from six accordion function switches so Intro,
+  Fill In 1/2, Ending, Start, and Stop do not require the browser during a
+  performance.
 - Show a compact meter-aware beat indicator for 2/4, 3/4, and 4/4 styles.
 - Render all fourteen built-ins through genre-profiled sfizz racks of open
   multi-sampled piano, guitars, upright/electric basses, orchestral voices, and
@@ -167,9 +170,11 @@ audio output, and custom styles.
    simulator presses.
 3. Follow the guided captures for the treble, bass, and chord roles.
 4. Review the observed channel candidates and save the profile.
-5. Choose **Audio output**, select an exact PipeWire or ALSA route, play the
+5. Choose **Performance controls**, learn the desired accordion function
+   switches, and save them with the exact input profile.
+6. Choose **Audio output**, select an exact PipeWire or ALSA route, play the
    bounded test chord, and save it.
-6. Select a style, choose fixed or left-hand tempo, and start playing.
+7. Select a style, choose fixed or left-hand tempo, and start playing.
 
 Saved device names are restored only when the exact devices are available.
 Ostinato never silently substitutes another MIDI port or audio sink.
@@ -187,6 +192,14 @@ Ostinato never silently substitutes another MIDI port or audio sink.
 | Left-hand sync | `S` | Toggle activity-based start and stop |
 
 Shortcuts are ignored while a form field or dialog has focus.
+
+After saving the MIDI profile, **Performance controls** can learn an exact raw
+MIDI message or short message sequence for each of the six section actions.
+Learning never assumes an FR-4X channel or proprietary control encoding. Notes,
+pressure, pitch bend, clock, active sensing, and bellows expression CC11 are
+excluded, and the learned controls run in the backend even if the browser is
+reloaded. Re-running MIDI setup for a different input clears the bindings;
+re-running it for the same exact input preserves them.
 
 ## Host development
 

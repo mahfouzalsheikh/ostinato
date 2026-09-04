@@ -1,5 +1,12 @@
 import "./fr4x-accordion.js?v=11";
 import { projectedBeatIndex } from "./arranger-clock.js?v=1";
+import {
+  PERFORMANCE_CONTROL_ACTIONS,
+  bindingsFromProfile,
+  formatMessageSequence,
+  isLearnableControlEvent,
+  orderedBindings,
+} from "./performance-controls.js?v=1";
 import { groupForStyle, styleGroups, stylesInGroup } from "./style-groups.js?v=1";
 
 const $ = (selector) => document.querySelector(selector);
@@ -13,6 +20,7 @@ const outputSelect = $("#midi-output");
 const eventList = $("#event-list");
 const readout = $("#transport-readout");
 const wizard = $("#midi-wizard");
+const performanceControlDialog = $("#performance-control-dialog");
 const arrangerStyleGroup = $("#arranger-style-group");
 const arrangerStyle = $("#arranger-style");
 const arrangerMessage = $("#arranger-message");
@@ -63,6 +71,11 @@ let captureIndex = 0;
 let capturing = false;
 let captures = freshCaptures();
 let detection = null;
+let performanceControlBindings = new Map();
+let learningControlAction = null;
+let learnedControlMessages = [];
+let controlQuietTimer = null;
+let controlMaximumTimer = null;
 let arrangerStatus = null;
 let beatClock = null;
 let styleDesignerCatalog = null;
@@ -75,6 +88,9 @@ let lastArrangerStyleId = null;
 const styleTimelineCache = new Map();
 
 const DESIGNER_PREVIEW_RESTART_DELAY_MS = 180;
+const CONTROL_CAPTURE_QUIET_MS = 120;
+const CONTROL_CAPTURE_MAXIMUM_MS = 400;
+const CONTROL_CAPTURE_MAX_MESSAGES = 8;
 const DESIGNER_NON_AUDIO_FIELDS = new Set([
   "designer-name",
   "designer-preview-tempo",
@@ -100,6 +116,7 @@ function connectSocket() {
     }
   });
   socket.addEventListener("close", () => {
+    cancelPerformanceLearning(false);
     setSocketState("error", "Reconnecting");
     reconnectTimer = setTimeout(connectSocket, 1500);
   });
@@ -131,6 +148,7 @@ function handleServerEvent(event) {
   if (event.type !== "midi") return;
 
   eventsThisSecond += 1;
+  capturePerformanceControl(event);
   captureIncomingNote(event);
   accordion.applyMidi(event);
   appendEvent(event);
@@ -777,7 +795,10 @@ function setArrangerMessage(message, error = false) {
 async function loadProfile() {
   try {
     midiProfile = await api("/api/midi/profile");
-    if (midiProfile) applyProfileToSurface(midiProfile);
+    if (midiProfile) {
+      applyProfileToSurface(midiProfile);
+      performanceControlBindings = bindingsFromProfile(midiProfile);
+    }
   } catch (error) {
     showMessage(`Could not load the saved MIDI profile: ${error.message}`, true);
   } finally {
@@ -832,6 +853,11 @@ function updateConnectionSummary() {
   } else {
     $("#profile-roles").textContent = "Run setup to detect channels";
   }
+  const controlCount = midiProfile?.performance_controls?.bindings?.length ?? 0;
+  $("#profile-controls").textContent = controlCount
+    ? `${controlCount} of ${PERFORMANCE_CONTROL_ACTIONS.length} learned`
+    : "No controls learned";
+  $("#open-performance-controls").disabled = !midiProfile;
 
   if (portStatus?.error) {
     showMessage(portStatus.error, true);
@@ -1072,12 +1098,16 @@ function updateDetectionCard(role, card) {
 }
 
 async function saveMidiProfile() {
+  const preservedControls = midiProfile?.input_port === inputSelect.value
+    ? midiProfile.performance_controls
+    : { bindings: [] };
   const profile = {
     schema_version: 1,
     detection_method: "guided-activity-v1",
     input_port: inputSelect.value,
     output_port: outputSelect.value || null,
     roles: detection,
+    performance_controls: preservedControls,
   };
   try {
     setWizardMessage("save", "Saving the reviewed profile…");
@@ -1086,6 +1116,7 @@ async function saveMidiProfile() {
       body: JSON.stringify(profile),
     });
     profileRestoreAttempted = true;
+    performanceControlBindings = bindingsFromProfile(midiProfile);
     applyProfileToSurface(midiProfile);
     updateConnectionSummary();
     wizard.close();
@@ -1095,7 +1126,143 @@ async function saveMidiProfile() {
   }
 }
 
+function setPerformanceControlMessage(message, error = false) {
+  const element = $("#performance-control-message");
+  element.textContent = message;
+  element.classList.toggle("error", error);
+}
+
+function renderPerformanceControls() {
+  const list = $("#performance-control-list");
+  list.replaceChildren();
+  for (const { action, label } of PERFORMANCE_CONTROL_ACTIONS) {
+    const messages = performanceControlBindings.get(action);
+    const row = document.createElement("article");
+    row.className = "performance-control-row";
+    row.classList.toggle("learning", learningControlAction === action);
+    row.dataset.action = action;
+
+    const title = document.createElement("strong");
+    title.textContent = label;
+    const fingerprint = document.createElement("code");
+    fingerprint.className = "performance-control-fingerprint";
+    fingerprint.textContent = learningControlAction === action
+      ? (learnedControlMessages.length
+        ? formatMessageSequence(learnedControlMessages)
+        : "Listening for one switch press…")
+      : formatMessageSequence(messages);
+
+    const clear = document.createElement("button");
+    clear.className = "secondary-button";
+    clear.type = "button";
+    clear.textContent = "Clear";
+    clear.disabled = !messages || learningControlAction !== null;
+    clear.addEventListener("click", () => {
+      performanceControlBindings.delete(action);
+      renderPerformanceControls();
+      setPerformanceControlMessage(`${label} cleared locally. Save controls to apply the change.`);
+    });
+
+    const learn = document.createElement("button");
+    learn.className = "secondary-button";
+    learn.type = "button";
+    learn.textContent = learningControlAction === action ? "Listening…" : "Learn";
+    learn.disabled = learningControlAction !== null;
+    learn.addEventListener("click", () => startPerformanceLearning(action, label));
+    row.append(title, fingerprint, clear, learn);
+    list.append(row);
+  }
+  $("#cancel-performance-learning").hidden = learningControlAction === null;
+  $("#save-performance-controls").disabled = learningControlAction !== null;
+}
+
+function openPerformanceControls() {
+  if (!midiProfile) {
+    showMessage("Save a MIDI profile before learning performance controls.", true);
+    return;
+  }
+  if (!portStatus?.input_connected || portStatus.selected_input !== midiProfile.input_port) {
+    showMessage("Connect the exact saved accordion input before learning controls.", true);
+    return;
+  }
+  performanceControlBindings = bindingsFromProfile(midiProfile);
+  learningControlAction = null;
+  learnedControlMessages = [];
+  renderPerformanceControls();
+  setPerformanceControlMessage("Choose Learn, then press the corresponding accordion switch once.");
+  if (!performanceControlDialog.open) performanceControlDialog.showModal();
+}
+
+function startPerformanceLearning(action, label) {
+  if (learningControlAction !== null) return;
+  if (!send({ type: "performance_controls.capture", active: true })) return;
+  learningControlAction = action;
+  learnedControlMessages = [];
+  renderPerformanceControls();
+  setPerformanceControlMessage(`Listening for ${label}. Press that accordion switch once.`);
+}
+
+function capturePerformanceControl(event) {
+  if (learningControlAction === null || !isLearnableControlEvent(event)) return;
+  learnedControlMessages.push([...event.bytes]);
+  clearTimeout(controlQuietTimer);
+  controlQuietTimer = setTimeout(finishPerformanceLearning, CONTROL_CAPTURE_QUIET_MS);
+  if (learnedControlMessages.length === 1) {
+    controlMaximumTimer = setTimeout(finishPerformanceLearning, CONTROL_CAPTURE_MAXIMUM_MS);
+  }
+  renderPerformanceControls();
+  if (learnedControlMessages.length >= CONTROL_CAPTURE_MAX_MESSAGES) finishPerformanceLearning();
+}
+
+function clearPerformanceLearningTimers() {
+  clearTimeout(controlQuietTimer);
+  clearTimeout(controlMaximumTimer);
+  controlQuietTimer = null;
+  controlMaximumTimer = null;
+}
+
+function finishPerformanceLearning() {
+  if (learningControlAction === null || learnedControlMessages.length === 0) return;
+  const action = learningControlAction;
+  const label = PERFORMANCE_CONTROL_ACTIONS.find((item) => item.action === action)?.label ?? action;
+  performanceControlBindings.set(action, learnedControlMessages.map((message) => [...message]));
+  clearPerformanceLearningTimers();
+  learningControlAction = null;
+  learnedControlMessages = [];
+  send({ type: "performance_controls.capture", active: false });
+  renderPerformanceControls();
+  setPerformanceControlMessage(`${label} learned locally. Save controls to activate it.`);
+}
+
+function cancelPerformanceLearning(notifyServer = true) {
+  if (learningControlAction === null) return;
+  clearPerformanceLearningTimers();
+  learningControlAction = null;
+  learnedControlMessages = [];
+  if (notifyServer) send({ type: "performance_controls.capture", active: false });
+  renderPerformanceControls();
+  setPerformanceControlMessage("Learning cancelled. Existing saved controls are unchanged.");
+}
+
+async function savePerformanceControls() {
+  if (!midiProfile || learningControlAction !== null) return;
+  try {
+    setPerformanceControlMessage("Saving learned controls…");
+    midiProfile = await api("/api/midi/performance-controls", {
+      method: "PUT",
+      body: JSON.stringify({ bindings: orderedBindings(performanceControlBindings) }),
+    });
+    performanceControlBindings = bindingsFromProfile(midiProfile);
+    updateConnectionSummary();
+    performanceControlDialog.close();
+    showMessage("Performance controls saved. Learned accordion switches now control the arranger.");
+  } catch (error) {
+    setPerformanceControlMessage(`Could not save controls: ${error.message}`, true);
+  }
+}
+
 $("#open-midi-wizard").addEventListener("click", openWizard);
+$("#open-performance-controls").addEventListener("click", openPerformanceControls);
 $("#refresh-ports").addEventListener("click", () => send({ type: "status.request" }));
 $("#connect-and-detect").addEventListener("click", connectForDetection);
 $("#back-to-ports").addEventListener("click", () => {
@@ -1113,6 +1280,13 @@ $("#repeat-detection").addEventListener("click", () => {
   showWizardStep(2);
 });
 $("#save-midi-profile").addEventListener("click", saveMidiProfile);
+$("#cancel-performance-learning").addEventListener("click", () => cancelPerformanceLearning());
+$("#save-performance-controls").addEventListener("click", savePerformanceControls);
+$("#close-performance-controls").addEventListener("click", () => {
+  cancelPerformanceLearning();
+  performanceControlDialog.close();
+});
+performanceControlDialog.addEventListener("close", () => cancelPerformanceLearning());
 wizard.addEventListener("close", () => {
   capturing = false;
   updateCaptureCard();

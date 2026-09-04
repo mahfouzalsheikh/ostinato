@@ -14,6 +14,8 @@ FR-4X.
 The maintained product includes:
 
 - a guided MIDI input/output setup wizard with saved role detection;
+- exact learned MIDI fingerprints for six accordion-controlled arranger
+  actions, without guessed FR-4X messages;
 - real-time 39-key piano and 120-button Stradella visualization;
 - a backend-owned arranger with style-shaped intro/main/ending, two one-bar
   Fill Ins, chord-aware monophonic section solos, sync, fixed tempo, and
@@ -71,6 +73,7 @@ The main implementation modules are:
 | `web_server.py` | FastAPI routes, WebSocket lifecycle, static application |
 | `realtime_midi.py` | MIDI discovery, input events, simulator output |
 | `midi_detection.py` / `midi_profile.py` | Guided role detection and persistence |
+| `performance_controls.py` | Learned MIDI fingerprint matching and action routing |
 | `arranger.py` | Live harmony, tempo, transport, and preview state |
 | `computer_audio.py` | Style vocabulary, PCM sink, fallback renderer |
 | `soundfont_audio.py` | Sampled General MIDI accompaniment |
@@ -82,7 +85,8 @@ The main implementation modules are:
 ## State and deployment
 
 Compose stores machine state in the `ostinato-state` volume. Current documents
-are the MIDI profile, selected audio output, and custom styles. They are written
+are the MIDI profile (including learned controls), selected audio output, and
+custom styles. They are written
 atomically and restored only when the corresponding device is still available.
 
 The container uses the explicit MuseScore General HQ SoundFont path installed by
@@ -134,6 +138,12 @@ never replace saved machine-specific state with guessed defaults.
 
 ## Current evidence and provenance
 
+- `docs/evidence/w44-learned-midi-performance-controls.md` records the exact
+  fingerprint-learning design, excluded musical/bellows signals, automated
+  verification, and pending physical FR-4X gate.
+- `docs/evidence/w43-chord-detection-reliability.md` records the quiet-window
+  chord assembly, bounded hard deadline, mask-based classification, and local
+  performance diagnostics.
 - `docs/evidence/w42-korg-library-groups-and-deduplication.md` records the full
   official primary-package inventory, actual Pa80-converter compatibility
   probes, exact live-payload deduplication, the 105-style grouped UI catalog,

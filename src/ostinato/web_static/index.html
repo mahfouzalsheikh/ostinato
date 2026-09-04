@@ -6,8 +6,8 @@
     <meta name="theme-color" content="#080b0d" />
     <title>Ostinato Live Surface</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23080b0d'/%3E%3Ctext x='32' y='44' fill='%2365f6d1' font-size='40' text-anchor='middle'%3EO%3C/text%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="/assets/styles.css?v=19" />
-    <script type="module" src="/assets/app.js?v=22"></script>
+    <link rel="stylesheet" href="/assets/styles.css?v=20" />
+    <script type="module" src="/assets/app.js?v=23"></script>
   </head>
   <body>
     <header class="topbar">
@@ -50,9 +50,14 @@
             <p class="eyebrow">Saved hardware profile</p>
             <h2 id="connection-title">MIDI setup</h2>
           </div>
-          <button id="open-midi-wizard" class="primary-button" type="button">
-            Set up MIDI
-          </button>
+          <div class="connection-actions">
+            <button id="open-performance-controls" class="secondary-button" type="button" disabled>
+              Performance controls
+            </button>
+            <button id="open-midi-wizard" class="primary-button" type="button">
+              Set up MIDI
+            </button>
+          </div>
         </div>
         <div class="profile-summary">
           <div>
@@ -66,6 +71,10 @@
           <div>
             <span>Detected roles</span>
             <strong id="profile-roles">Run setup to detect channels</strong>
+          </div>
+          <div>
+            <span>Performance controls</span>
+            <strong id="profile-controls">No controls learned</strong>
           </div>
         </div>
         <p id="connection-message" class="inline-message" aria-live="polite">
@@ -297,6 +306,40 @@
           <footer class="wizard-actions">
             <button id="repeat-detection" class="secondary-button" type="button">Repeat detection</button>
             <button id="save-midi-profile" class="primary-button" type="button">Save MIDI profile</button>
+          </footer>
+        </section>
+      </form>
+    </dialog>
+
+    <dialog id="performance-control-dialog" class="wizard-dialog performance-control-dialog" aria-labelledby="performance-control-title">
+      <form method="dialog" class="wizard-shell">
+        <header class="wizard-header">
+          <div>
+            <p class="eyebrow">Hands-free arrangement</p>
+            <h2 id="performance-control-title">Learn performance controls</h2>
+          </div>
+          <button id="close-performance-controls" class="icon-button" type="button" aria-label="Close performance controls">×</button>
+        </header>
+        <section class="wizard-step performance-control-step">
+          <p class="wizard-intro">
+            Assign the accordion's function switches to arranger actions, then
+            teach Ostinato each switch. Learning records the exact MIDI message
+            or short sequence it observes—no FR-4X control encoding is assumed.
+            Notes, pressure, pitch bend, MIDI clock, active sensing, and bellows
+            expression (CC11) are ignored.
+          </p>
+          <div id="performance-control-list" class="performance-control-list"></div>
+          <p id="performance-control-message" class="inline-message" aria-live="polite">
+            Choose Learn, then press the corresponding accordion switch once.
+          </p>
+          <aside class="performance-control-note">
+            On the FR-4X, enabling its function-switch mode repurposes the bass
+            column nearest the logo. Confirm that tradeoff on the instrument
+            before a performance.
+          </aside>
+          <footer class="wizard-actions">
+            <button id="cancel-performance-learning" class="secondary-button" type="button" hidden>Cancel learning</button>
+            <button id="save-performance-controls" class="primary-button" type="button">Save controls</button>
           </footer>
         </section>
       </form>

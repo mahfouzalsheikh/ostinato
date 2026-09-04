@@ -31,6 +31,7 @@ from ostinato.computer_audio import (
 )
 from ostinato.domain import PITCH_CLASS_NAMES, ChordQuality, ChordState
 from ostinato.keyboard_input import MAX_TEMPO_BPM, MIN_TEMPO_BPM
+from ostinato.performance_controls import PerformanceControlAction
 from ostinato.sfz_audio import (
     SfzStyleArrangementRenderer,
     SfzStylePaths,
@@ -827,6 +828,23 @@ class LiveArrangerService:
             self._running = False
             raise ArrangerError(str(error)) from error
         return self.snapshot()
+
+    def trigger_performance_control(self, action: PerformanceControlAction) -> bool:
+        """Apply one learned physical control without disrupting MIDI monitoring."""
+
+        command: str = action
+        value: object | None = None
+        if action == "fill_1":
+            command = "fill"
+            value = 1
+        elif action == "fill_2":
+            command = "fill"
+            value = 2
+        try:
+            self.command(command, value)
+        except ArrangerError:
+            return False
+        return True
 
     def handle_midi_event(self, event: Mapping[str, object]) -> None:
         """Consume one raw input event without assigning unsaved channels."""

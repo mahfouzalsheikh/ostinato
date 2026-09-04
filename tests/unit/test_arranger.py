@@ -426,6 +426,21 @@ class LiveArrangerServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(ArrangerError, "variation 1 or 2"):
             self.arranger.command("fill", 3)
 
+    def test_learned_performance_controls_route_to_existing_arranger_commands(
+        self,
+    ) -> None:
+        self.assertTrue(self.arranger.trigger_performance_control("intro"))
+        self.assertEqual(self.arranger.snapshot()["section"], "intro")
+        self.arranger.command("stop")
+        self.assertTrue(self.arranger.trigger_performance_control("start"))
+        self.assertTrue(self.arranger.trigger_performance_control("fill_1"))
+        self.assertTrue(self.arranger.trigger_performance_control("fill_2"))
+        self.assertEqual(self.audio.fill_requests, [1, 2])
+        self.assertTrue(self.arranger.trigger_performance_control("ending"))
+        self.assertEqual(self.arranger.snapshot()["section"], "ending")
+        self.assertTrue(self.arranger.trigger_performance_control("stop"))
+        self.assertEqual(self.arranger.snapshot()["section"], "stopped")
+
     def test_style_change_requires_stop_and_applies_style_default_tempo(self) -> None:
         self.arranger.command("start")
         with self.assertRaises(ArrangerError):

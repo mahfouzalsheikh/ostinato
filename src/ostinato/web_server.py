@@ -12,7 +12,7 @@ from typing import Annotated, Any, Literal
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, StrictInt, model_validator
+from pydantic import BaseModel, Field, StrictInt, field_validator, model_validator
 
 from ostinato.arranger import ArrangerError, LiveArrangerService
 from ostinato.audio_output import AudioOutputError, AudioOutputService
@@ -24,7 +24,19 @@ from ostinato.midi_detection import (
     detect_midi_roles,
 )
 from ostinato.midi_profile import MidiProfileStore, MidiProfileStoreError
-from ostinato.realtime_midi import MidiService, MidiServiceError
+from ostinato.performance_controls import (
+    MAX_MESSAGES_PER_BINDING,
+    PERFORMANCE_CONTROL_ACTIONS,
+    PerformanceControlAction,
+    PerformanceControlRouter,
+    is_learnable_control_message,
+)
+from ostinato.realtime_midi import (
+    InvalidMidiMessage,
+    MidiService,
+    MidiServiceError,
+    validate_midi_bytes,
+)
 from ostinato.style_designer import (
     INSTRUMENTS,
     CustomStyle,
@@ -109,6 +121,60 @@ class DetectedRoles(BaseModel):
     chord: RoleDetection
 
 
+MidiMessageBytes = Annotated[list[StrictInt], Field(min_length=1, max_length=1024)]
+
+
+class PerformanceControlBindingPayload(BaseModel):
+    """One explicitly learned MIDI sequence and its arranger action."""
+
+    action: PerformanceControlAction
+    messages: list[MidiMessageBytes] = Field(
+        min_length=1, max_length=MAX_MESSAGES_PER_BINDING
+    )
+
+    @field_validator("messages")
+    @classmethod
+    def validate_discrete_messages(cls, messages: list[list[int]]) -> list[list[int]]:
+        for message in messages:
+            try:
+                validated = validate_midi_bytes(message)
+            except InvalidMidiMessage as error:
+                raise ValueError(str(error)) from error
+            if not is_learnable_control_message(validated):
+                raise ValueError(
+                    "performance controls cannot use notes, pressure, pitch, "
+                    "bellows CC11, timing clock, or active sensing"
+                )
+        return messages
+
+
+class PerformanceControlsPayload(BaseModel):
+    """Optional learned controls stored with one exact MIDI input profile."""
+
+    bindings: list[PerformanceControlBindingPayload] = Field(
+        default_factory=list, max_length=len(PERFORMANCE_CONTROL_ACTIONS)
+    )
+
+    @model_validator(mode="after")
+    def validate_unambiguous_bindings(self) -> PerformanceControlsPayload:
+        actions = [binding.action for binding in self.bindings]
+        if len(set(actions)) != len(actions):
+            raise ValueError("each performance-control action can be bound only once")
+        sequences = [
+            tuple(tuple(message) for message in binding.messages)
+            for binding in self.bindings
+        ]
+        for index, sequence in enumerate(sequences):
+            for other_index, other in enumerate(sequences):
+                if index == other_index or len(sequence) > len(other):
+                    continue
+                if other[-len(sequence) :] == sequence:
+                    raise ValueError(
+                        "performance-control message sequences must not share a suffix"
+                    )
+        return self
+
+
 class MidiProfilePayload(BaseModel):
     """Versioned guided profile accepted from the local setup wizard."""
 
@@ -117,6 +183,9 @@ class MidiProfilePayload(BaseModel):
     input_port: str = Field(min_length=1, max_length=512)
     output_port: str | None = Field(default=None, min_length=1, max_length=512)
     roles: DetectedRoles
+    performance_controls: PerformanceControlsPayload = Field(
+        default_factory=PerformanceControlsPayload
+    )
 
 
 class CapturedNote(BaseModel):
@@ -195,15 +264,20 @@ def _drain_arranger_events(
     arranger: LiveArrangerService,
     queue: asyncio.Queue[dict[str, object]],
     first_event: dict[str, object],
+    performance_controls: PerformanceControlRouter | None = None,
 ) -> None:
     """Consume one wakeup and all MIDI events already buffered behind it."""
 
+    if performance_controls is not None:
+        performance_controls.handle_midi_event(first_event)
     arranger.handle_midi_event(first_event)
     while True:
         try:
             event = queue.get_nowait()
         except asyncio.QueueEmpty:
             return
+        if performance_controls is not None:
+            performance_controls.handle_midi_event(event)
         arranger.handle_midi_event(event)
 
 
@@ -223,6 +297,9 @@ def create_app(
     custom_styles = custom_style_store or CustomStyleStore()
     imported_library = imported_style_library or ImportedStyleLibrary()
     arranger = arranger_service or LiveArrangerService()
+    performance_controls = PerformanceControlRouter(
+        arranger.trigger_performance_control
+    )
     try:
         imported_styles = {style.id: style for style in imported_library.load()}
         arranger.configure_imported_styles(tuple(imported_styles.values()))
@@ -240,7 +317,9 @@ def create_app(
                     arranger_queue.get(),
                     timeout=arranger.next_check_delay_seconds(),
                 )
-                _drain_arranger_events(arranger, arranger_queue, event)
+                _drain_arranger_events(
+                    arranger, arranger_queue, event, performance_controls
+                )
             except TimeoutError:
                 pass
             arranger.advance()
@@ -262,6 +341,7 @@ def create_app(
         if input_name is not None or output_name is not None:
             midi.restore_ports(input_name=input_name, output_name=output_name)
         arranger.configure_profile(profile)
+        performance_controls.configure_profile(profile)
         try:
             arranger.configure_custom_styles(custom_styles.load())
         except (CustomStyleError, ArrangerError):
@@ -297,6 +377,7 @@ def create_app(
     app.state.midi = midi
     app.state.profile_store = profiles
     app.state.arranger = arranger
+    app.state.performance_controls = performance_controls
     app.state.audio_output_service = audio_outputs
     app.state.custom_style_store = custom_styles
     app.state.imported_style_library = imported_library
@@ -521,6 +602,7 @@ def create_app(
         try:
             saved = profiles.save(value)
             arranger.configure_profile(saved)
+            performance_controls.configure_profile(saved)
             return saved
         except MidiProfileStoreError as error:
             raise HTTPException(status_code=500, detail=str(error)) from error
@@ -530,6 +612,26 @@ def create_app(
         try:
             profiles.clear()
             arranger.configure_profile(None)
+            performance_controls.configure_profile(None)
+        except MidiProfileStoreError as error:
+            raise HTTPException(status_code=500, detail=str(error)) from error
+
+    @app.put("/api/midi/performance-controls")
+    async def save_performance_controls(
+        controls: PerformanceControlsPayload,
+    ) -> dict[str, object]:
+        try:
+            profile = profiles.load()
+            if profile is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="save the MIDI input profile before learning controls",
+                )
+            profile["performance_controls"] = controls.model_dump(mode="json")
+            profile["saved_at"] = datetime.now(UTC).isoformat()
+            saved = profiles.save(profile)
+            performance_controls.configure_profile(saved)
+            return saved
         except MidiProfileStoreError as error:
             raise HTTPException(status_code=500, detail=str(error)) from error
 
@@ -572,6 +674,16 @@ def create_app(
                         )
                     elif command == "status.request":
                         await websocket.send_json(midi.snapshot())
+                    elif command == "performance_controls.capture":
+                        active = payload.get("active")
+                        if not isinstance(active, bool):
+                            raise MidiServiceError(
+                                "performance_controls.capture requires a boolean"
+                            )
+                        if active:
+                            performance_controls.suspend(owner)
+                        else:
+                            performance_controls.resume(owner)
                     else:
                         raise MidiServiceError(f"unknown command: {command}")
                 except MidiServiceError as error:
@@ -593,6 +705,7 @@ def create_app(
             sender.cancel()
             receiver.cancel()
             midi.release(owner)
+            performance_controls.resume(owner)
             midi.unsubscribe(queue)
 
     return app

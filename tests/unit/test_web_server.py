@@ -17,6 +17,7 @@ from ostinato.audio_output import (
     AudioOutputStore,
 )
 from ostinato.midi_profile import MidiProfileStore
+from ostinato.performance_controls import PerformanceControlRouter
 from ostinato.realtime_midi import MidiService
 from ostinato.style_designer import CustomStyleStore, default_custom_style_payload
 from ostinato.styles.library import ImportedStyleLibrary
@@ -76,6 +77,7 @@ class WebServerTests(unittest.TestCase):
         surface_mapping = self.client.get("/assets/midi-surface.js")
         stradella = self.client.get("/assets/stradella.js")
         arranger_clock = self.client.get("/assets/arranger-clock.js")
+        performance_controls = self.client.get("/assets/performance-controls.js")
 
         self.assertEqual(index.status_code, 200)
         self.assertIn("<fr4x-accordion", index.text)
@@ -83,6 +85,7 @@ class WebServerTests(unittest.TestCase):
         self.assertEqual(surface_mapping.status_code, 200)
         self.assertEqual(stradella.status_code, 200)
         self.assertEqual(arranger_clock.status_code, 200)
+        self.assertEqual(performance_controls.status_code, 200)
         self.assertIn("PIANO_KEY_COUNT = 39", surface_mapping.text)
         self.assertIn("STRADELLA_ROW_COUNT = 6", stradella.text)
         self.assertIn("STRADELLA_COLUMN_COUNT = 20", stradella.text)
@@ -93,6 +96,8 @@ class WebServerTests(unittest.TestCase):
         self.assertNotIn("Explicit mapping", index.text)
         self.assertNotIn("User-trained bindings", index.text)
         self.assertIn('id="midi-wizard"', index.text)
+        self.assertIn('id="performance-control-dialog"', index.text)
+        self.assertIn('id="open-performance-controls"', index.text)
         self.assertIn("Perform one labeled part at a time", index.text)
         self.assertIn('id="arranger-style"', index.text)
         self.assertIn('id="arranger-style-group"', index.text)
@@ -131,15 +136,20 @@ class WebServerTests(unittest.TestCase):
 
     def test_arranger_drains_buffered_midi_before_advancing_deadlines(self) -> None:
         arranger = create_autospec(LiveArrangerService, instance=True)
+        controls = create_autospec(PerformanceControlRouter, instance=True)
         queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
         events = [{"type": "midi", "note": note} for note in (48, 52, 55)]
         queue.put_nowait(events[1])
         queue.put_nowait(events[2])
 
-        _drain_arranger_events(arranger, queue, events[0])
+        _drain_arranger_events(arranger, queue, events[0], controls)
 
         self.assertEqual(
             [call.args[0] for call in arranger.handle_midi_event.call_args_list],
+            events,
+        )
+        self.assertEqual(
+            [call.args[0] for call in controls.handle_midi_event.call_args_list],
             events,
         )
         self.assertTrue(queue.empty())
@@ -454,6 +464,65 @@ class WebServerTests(unittest.TestCase):
         self.assertEqual(arranger["chord_channel"], 12)
         self.assertEqual(self.client.delete("/api/midi/profile").status_code, 204)
         self.assertIsNone(self.client.get("/api/midi/profile").json())
+
+    def test_performance_controls_are_saved_with_the_existing_profile(self) -> None:
+        self.client.put("/api/midi/profile", json=self._profile_payload())
+
+        response = self.client.put(
+            "/api/midi/performance-controls",
+            json={
+                "bindings": [
+                    {"action": "intro", "messages": [[0xFA]]},
+                    {
+                        "action": "fill_1",
+                        "messages": [[0xB0, 64, 127], [0xB0, 64, 0]],
+                    },
+                ]
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["performance_controls"]["bindings"],
+            [
+                {"action": "intro", "messages": [[0xFA]]},
+                {
+                    "action": "fill_1",
+                    "messages": [[0xB0, 64, 127], [0xB0, 64, 0]],
+                },
+            ],
+        )
+        self.assertEqual(self.client.get("/api/midi/profile").json(), response.json())
+
+    def test_performance_controls_require_a_profile_and_discrete_messages(self) -> None:
+        missing = self.client.put(
+            "/api/midi/performance-controls",
+            json={"bindings": [{"action": "start", "messages": [[0xFA]]}]},
+        )
+        self.assertEqual(missing.status_code, 409)
+        self.client.put("/api/midi/profile", json=self._profile_payload())
+
+        note = self.client.put(
+            "/api/midi/performance-controls",
+            json={"bindings": [{"action": "start", "messages": [[0x90, 60, 96]]}]},
+        )
+        bellows = self.client.put(
+            "/api/midi/performance-controls",
+            json={"bindings": [{"action": "start", "messages": [[0xB0, 11, 80]]}]},
+        )
+        ambiguous = self.client.put(
+            "/api/midi/performance-controls",
+            json={
+                "bindings": [
+                    {"action": "intro", "messages": [[0xFA]]},
+                    {"action": "start", "messages": [[0xB0, 64, 1], [0xFA]]},
+                ]
+            },
+        )
+
+        self.assertEqual(note.status_code, 422)
+        self.assertEqual(bellows.status_code, 422)
+        self.assertEqual(ambiguous.status_code, 422)
 
     def test_saved_profile_restores_exact_ports_during_service_startup(self) -> None:
         backend = FakeMidiBackend()
