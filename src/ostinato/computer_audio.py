@@ -26,6 +26,7 @@ from ostinato.keyboard_input import (
     KeyboardEventKind,
     run_keyboard,
 )
+from ostinato.styles.controls import StyleControls
 
 BASS_ROLES = {
     "root",
@@ -2693,6 +2694,7 @@ class RealtimeDemoArranger:
         self._start_requested = False
         self._stop_playback_requested = False
         self._style_requested: str | None = None
+        self._controls_requested: StyleControls | None = None
         self._error: AudioPlaybackError | None = None
         self._thread: threading.Thread | None = None
 
@@ -2776,6 +2778,22 @@ class RealtimeDemoArranger:
         self._raise_worker_error()
         with self._lock:
             self._fill_requested = variation
+
+    def configure_style_controls(self, controls: StyleControls) -> None:
+        self._raise_worker_error()
+        with self._lock:
+            self._controls_requested = controls
+
+    @property
+    def main_variation(self) -> int:
+        return int(getattr(self._renderer, "main_variation", 1))
+
+    @property
+    def pattern_state(self) -> tuple[str, int] | None:
+        state = getattr(self._renderer, "pattern_state", None)
+        if isinstance(state, tuple) and len(state) == 2:
+            return str(state[0]), int(state[1])
+        return None
 
     def stop_playback(self) -> None:
         """Stop accompaniment while keeping the audio worker available."""
@@ -2865,6 +2883,13 @@ class RealtimeDemoArranger:
                         if stopped:
                             self._renderer.stop()
                         self._style_requested = None
+                    if self._controls_requested is not None:
+                        configure = getattr(
+                            self._renderer, "configure_style_controls", None
+                        )
+                        if callable(configure):
+                            configure(self._controls_requested)
+                        self._controls_requested = None
                     if self._reset_requested:
                         self._renderer.reset()
                         self._reset_requested = False

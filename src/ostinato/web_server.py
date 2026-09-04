@@ -217,8 +217,13 @@ class ArrangerCommandPayload(BaseModel):
         "tempo_mode",
         "tempo",
         "panic",
+        "variation",
+        "intro_select",
+        "ending_select",
+        "track_mix",
+        "mix_reset",
     ]
-    value: str | bool | StrictInt | None = None
+    value: str | bool | StrictInt | dict[str, object] | None = None
 
 
 class AudioOutputSelection(BaseModel):
@@ -485,12 +490,17 @@ def create_app(
             raise HTTPException(status_code=500, detail=str(error)) from error
 
     @app.get("/api/styles/{identifier}/timeline")
-    async def style_timeline(identifier: str) -> dict[str, object]:
+    async def style_timeline(
+        identifier: str, section: str = "variation_1"
+    ) -> dict[str, object]:
         if identifier in DEMO_STYLES:
             return built_in_style_timeline(identifier)
         imported = imported_styles.get(identifier)
         if imported is not None:
-            return imported_style_timeline(imported)
+            try:
+                return imported_style_timeline(imported, section=section)
+            except ValueError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
         try:
             style = next(
                 (item for item in custom_styles.load() if item.id == identifier), None

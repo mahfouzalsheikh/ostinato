@@ -5,6 +5,15 @@ export const PERFORMANCE_CONTROL_ACTIONS = [
   { action: "ending", label: "Ending" },
   { action: "start", label: "Start" },
   { action: "stop", label: "Stop" },
+  { action: "variation_1", label: "Variation 1" },
+  { action: "variation_2", label: "Variation 2" },
+  { action: "variation_3", label: "Variation 3" },
+  { action: "variation_4", label: "Variation 4" },
+  { action: "intro_1", label: "Intro 1" },
+  { action: "intro_2", label: "Intro 2" },
+  { action: "ending_1", label: "Ending 1" },
+  { action: "ending_2", label: "Ending 2" },
+
 ];
 
 export function isLearnableControlEvent(event) {

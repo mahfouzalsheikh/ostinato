@@ -6,7 +6,7 @@ import {
   formatMessageSequence,
   isLearnableControlEvent,
   orderedBindings,
-} from "./performance-controls.js?v=1";
+} from "./performance-controls.js?v=2";
 import { groupForStyle, styleGroups, stylesInGroup } from "./style-groups.js?v=1";
 
 const $ = (selector) => document.querySelector(selector);
@@ -245,7 +245,9 @@ function renderArrangerStatus(status) {
   $("#arranger-fill-2").setAttribute("aria-pressed", String(status.fill_variation === 2));
   $("#arranger-sync").setAttribute("aria-pressed", String(status.sync_enabled));
   renderBeatIndicator(status, 0);
-  ensureLiveStyleTimeline(status.style);
+  renderImportedStyleControls(status);
+  const selectedSection = status.style_controls?.active_section ?? "variation_1";
+  ensureLiveStyleTimeline(status.style, selectedSection);
   if (styleDesignerDialog.open) renderDesignerPreviewState(status);
 
   if (status.error) {
@@ -270,7 +272,7 @@ function populateArrangerStyles(styles, group, selectedId = null) {
   const optionSignature = `${group}:${groupedStyles.map((style) => style.id).join(":")}`;
   if (arrangerStyle.dataset.options !== optionSignature) {
     arrangerStyle.replaceChildren(...groupedStyles.map((style) => {
-      const suffix = style.custom ? " · Custom" : (style.imported ? " · KORG" : "");
+      const suffix = style.custom ? " · Custom" : "";
       const option = new Option(`${style.name} · ${style.beats_per_bar}/4${suffix}`, style.id);
       option.title = style.description ?? "";
       return option;
@@ -340,20 +342,21 @@ function renderStyleTimeline(root, timeline) {
   }
 }
 
-async function ensureLiveStyleTimeline(styleId) {
-  if (!styleId || liveTimelineStyleId === styleId) return;
-  liveTimelineStyleId = styleId;
+async function ensureLiveStyleTimeline(styleId, section = "variation_1") {
+  const key = `${styleId}:${section}`;
+  if (!styleId || liveTimelineStyleId === key) return;
+  liveTimelineStyleId = key;
   try {
-    let timeline = styleTimelineCache.get(styleId);
+    let timeline = styleTimelineCache.get(key);
     if (!timeline) {
-      timeline = await api(`/api/styles/${encodeURIComponent(styleId)}/timeline`);
-      styleTimelineCache.set(styleId, timeline);
+      timeline = await api(`/api/styles/${encodeURIComponent(styleId)}/timeline?section=${encodeURIComponent(section)}`);
+      styleTimelineCache.set(key, timeline);
     }
-    if (liveTimelineStyleId !== styleId) return;
+    if (liveTimelineStyleId !== key) return;
     renderStyleTimeline(liveStyleTimeline, timeline);
     $("#live-timeline-state").textContent = `${timeline.phrase_bars} measures · live playhead`;
   } catch (error) {
-    if (liveTimelineStyleId !== styleId) return;
+    if (liveTimelineStyleId !== key) return;
     liveTimelineStyleId = null;
     $("#live-timeline-state").textContent = `Timeline unavailable: ${error.message}`;
   }
@@ -363,7 +366,8 @@ function updateTimelinePlayhead(root, status, elapsedMilliseconds) {
   const totalBeats = Number(root.dataset.totalBeats);
   if (!totalBeats || !status) return;
   const running = status.running && status.section !== "stopped";
-  const projectedTicks = status.position_ticks
+  const originTicks = root === liveStyleTimeline ? (status.style_controls?.pattern_origin_ticks ?? 0) : 0;
+  const projectedTicks = status.position_ticks - originTicks
     + (running ? elapsedMilliseconds * status.tempo_bpm * 96 / 60000 : 0);
   const progress = running ? ((projectedTicks / 96) % totalBeats) / totalBeats : 0;
   root.classList.toggle("playing", running);
@@ -1452,3 +1456,71 @@ requestAnimationFrame(animateBeatIndicator);
 loadProfile();
 loadArrangerStatus();
 connectSocket();
+
+
+function renderImportedStyleControls(status) {
+  const root = $("#imported-style-controls");
+  const controls = status.style_controls;
+  root.hidden = !controls;
+  if (!controls) {
+    $("#arranger-intro span").textContent = "Intro";
+    $("#arranger-ending span").textContent = "Ending";
+    return;
+  }
+  const signature = JSON.stringify([status.style, controls.available, controls.tracks.map(track => track.role)]);
+  if (root.dataset.style !== signature) {
+    root.dataset.style = signature;
+    $("#style-variations").replaceChildren(...controls.available.variation.map(number => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = number;
+      button.dataset.variation = number;
+      button.setAttribute("aria-label", `Variation ${number}`);
+      button.addEventListener("click", () => arrangerCommand("variation", number));
+      return button;
+    }));
+    for (const kind of ["intro", "ending"]) {
+      $(`#style-${kind}-choice`).replaceChildren(...controls.available[kind].map(number => new Option(`${kind === "intro" ? "Intro" : "Ending"} ${number}`, number)));
+    }
+    $("#style-track-mixer").replaceChildren(...controls.tracks.map(track => {
+      const row = document.createElement("div");
+      row.className = "style-mix-row";
+      row.dataset.role = track.role;
+      const label = document.createElement("span");
+      label.textContent = track.name;
+      row.append(label);
+      for (const property of ["muted", "solo"]) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = property === "muted" ? "Mute" : "Solo";
+        button.dataset.property = property;
+        button.setAttribute("aria-label", `${button.textContent} ${track.name}`);
+        button.addEventListener("click", () => arrangerCommand("track_mix", { role: track.role, [property]: button.getAttribute("aria-pressed") !== "true" }));
+        row.append(button);
+      }
+      const volume = document.createElement("input");
+      volume.type = "range"; volume.min = 0; volume.max = 100; volume.step = 1;
+      volume.setAttribute("aria-label", `${track.name} volume`);
+      volume.addEventListener("change", () => arrangerCommand("track_mix", { role: track.role, volume: Number(volume.value) }));
+      row.append(volume);
+      return row;
+    }));
+  }
+  for (const button of $("#style-variations").children) button.setAttribute("aria-pressed", String(Number(button.dataset.variation) === controls.variation));
+  for (const kind of ["intro", "ending"]) $(`#style-${kind}-choice`).value = controls[kind];
+  $("#style-variation-state").textContent = controls.active_variation !== controls.variation ? `Variation ${controls.variation} after the fill or at the next bar` : `Variation ${controls.variation}`;
+  $("#arranger-intro span").textContent = `Intro ${controls.intro}`;
+  $("#arranger-ending span").textContent = `Ending ${controls.ending}`;
+  for (const track of controls.tracks) {
+    const row = $(`#style-track-mixer [data-role="${track.role}"]`);
+    for (const property of ["muted", "solo"]) row.querySelector(`[data-property="${property}"]`).setAttribute("aria-pressed", String(track[property]));
+    const volume = row.querySelector("input");
+    if (document.activeElement !== volume) volume.value = track.volume;
+    row.classList.toggle("inaudible", !track.audible);
+  }
+  const style = status.styles.find(item => item.id === status.style);
+  $("#style-source-attribution").textContent = style?.provenance ?? "";
+  $("#style-source-patterns").textContent = Object.entries(controls.source_patterns).map(([section, patterns]) => `${section.replaceAll("_", " ")}: ${patterns.length} source chord pattern${patterns.length === 1 ? "" : "s"}`).join(" · ");
+}
+for (const kind of ["intro", "ending"]) $(`#style-${kind}-choice`).addEventListener("change", event => arrangerCommand(`${kind}_select`, Number(event.target.value)));
+$("#style-mix-reset").addEventListener("click", () => arrangerCommand("mix_reset"));

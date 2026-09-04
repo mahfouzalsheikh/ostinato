@@ -17,6 +17,7 @@ from ostinato.arranger import (
 from ostinato.computer_audio import TRANSPORT_TICKS_PER_BEAT, DemoSection
 from ostinato.domain import ChordQuality, ChordState
 from ostinato.style_designer import CustomStyle, default_custom_style_payload
+from ostinato.styles.controls import StyleControls
 from ostinato.styles.models import Style
 from tests.unit.test_imported_style_live import _style as imported_test_style
 
@@ -40,6 +41,9 @@ class FakeArrangerAudio:
     @property
     def section(self) -> DemoSection:
         return self._section
+
+    def configure_style_controls(self, controls: StyleControls) -> None:
+        self.style_controls = controls
 
     def select_style(
         self,
@@ -510,7 +514,7 @@ class LiveArrangerServiceTests(unittest.TestCase):
         styles = cast(list[dict[str, object]], status["styles"])
         catalog_item = next(style for style in styles if style["id"] == imported.id)
         self.assertIs(catalog_item["imported"], True)
-        self.assertEqual(catalog_item["group"], "KORG · Other imports")
+        self.assertEqual(catalog_item["group"], "Acoustic & Pop")
         description = catalog_item["description"]
         self.assertIsInstance(description, str)
         assert isinstance(description, str)

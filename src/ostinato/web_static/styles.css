@@ -2089,3 +2089,23 @@ output {
     display: none;
   }
 }
+
+.imported-style-controls { margin: 1rem 0; padding: 1rem; border: 1px solid var(--panel-border); border-radius: 12px; }
+.imported-style-controls[hidden] { display: none; }
+.style-section-choices { display: flex; align-items: end; gap: 1rem; flex-wrap: wrap; }
+.style-section-choices label, .control-label { display: block; font-size: .85rem; }
+.variation-buttons { display: flex; gap: .4rem; margin-top: .3rem; }
+.variation-buttons button { min-width: 44px; min-height: 44px; }
+.imported-style-controls button[aria-pressed="true"] { background: #285a51; color: white; }
+.style-mixer, .style-source-details { margin-top: .9rem; }
+.style-mix-row { display: grid; grid-template-columns: minmax(110px, 1fr) auto auto minmax(70px, 2fr); align-items: center; gap: .6rem; padding: .4rem 0; }
+.style-mix-row button { min-height: 36px; }
+.style-mix-row input { width: 100%; min-width: 0; margin: 0; }
+.style-mix-row.inaudible > span { opacity: .55; }
+.style-source-details p { font-size: .85rem; line-height: 1.5; }
+
+@media (max-width: 600px) {
+  .style-mix-row { grid-template-columns: 1fr 1fr 2fr; gap: .4rem; }
+  .style-mix-row > span { grid-column: 1 / -1; }
+  .style-mix-row button { min-height: 44px; }
+}

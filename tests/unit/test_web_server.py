@@ -25,7 +25,7 @@ from ostinato.styles.models import style_to_dict
 from ostinato.web_server import _drain_arranger_events, create_app
 from tests.fake_midi import FakeMidiBackend
 from tests.unit.test_arranger import FakeArrangerAudio
-from tests.unit.test_imported_style_live import _style as imported_test_style
+from tests.unit.test_imported_style_live import expanded_style as imported_test_style
 
 
 class WebServerTests(unittest.TestCase):
@@ -131,7 +131,7 @@ class WebServerTests(unittest.TestCase):
         self.assertEqual(app_script.status_code, 200)
         self.assertIn("scheduleDesignerPreviewRestart", app_script.text)
         self.assertIn("updateTimelinePlayhead", app_script.text)
-        self.assertIn('style.imported ? " · KORG"', app_script.text)
+        self.assertNotIn('style.imported ? " · KORG"', app_script.text)
         self.assertNotIn("Press Restart to hear the update", app_script.text)
 
     def test_arranger_drains_buffered_midi_before_advancing_deadlines(self) -> None:
@@ -194,7 +194,7 @@ class WebServerTests(unittest.TestCase):
         self.assertTrue(all(style["description"] for style in initial.json()["styles"]))
         self.assertTrue(
             all(
-                style["group"] == "Built-in styles"
+                style["group"] and "KORG" not in style["group"]
                 for style in initial.json()["styles"]
             )
         )
@@ -227,12 +227,48 @@ class WebServerTests(unittest.TestCase):
                 json={"action": "style", "value": "korg-test"},
             )
             timeline = client.get("/api/styles/korg-test/timeline")
+            for action, value in (
+                ("variation", 4),
+                ("intro_select", 2),
+                ("ending_select", 2),
+                ("track_mix", {"role": "bass", "volume": 65, "muted": True}),
+            ):
+                response = client.post(
+                    "/api/arranger/command", json={"action": action, "value": value}
+                )
+                self.assertEqual(response.status_code, 200)
+            controls = client.get("/api/arranger/status").json()["style_controls"]
+            self.assertEqual(controls["variation"], 4)
+            self.assertEqual(controls["intro"], 2)
+            self.assertEqual(controls["ending"], 2)
+            self.assertEqual(
+                client.get("/api/styles/korg-test/timeline?section=variation_2").json()[
+                    "total_beats"
+                ],
+                4,
+            )
+            self.assertEqual(
+                client.get(
+                    "/api/styles/korg-test/timeline?section=variation_5"
+                ).status_code,
+                422,
+            )
+            self.assertEqual(
+                client.post(
+                    "/api/arranger/command",
+                    json={
+                        "action": "track_mix",
+                        "value": {"role": "bass", "volume": True},
+                    },
+                ).status_code,
+                409,
+            )
 
         imported = next(
             style for style in status["styles"] if style["id"] == "korg-test"
         )
         self.assertIs(imported["imported"], True)
-        self.assertEqual(imported["group"], "KORG · Other imports")
+        self.assertEqual(imported["group"], "Acoustic & Pop")
         self.assertEqual(selected.json()["style"], "korg-test")
         self.assertEqual(timeline.status_code, 200)
         self.assertEqual(

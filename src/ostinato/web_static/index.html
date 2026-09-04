@@ -6,8 +6,8 @@
     <meta name="theme-color" content="#080b0d" />
     <title>Ostinato Live Surface</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23080b0d'/%3E%3Ctext x='32' y='44' fill='%2365f6d1' font-size='40' text-anchor='middle'%3EO%3C/text%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="/assets/styles.css?v=20" />
-    <script type="module" src="/assets/app.js?v=23"></script>
+    <link rel="stylesheet" href="/assets/styles.css?v=22" />
+    <script type="module" src="/assets/app.js?v=24"></script>
   </head>
   <body>
     <header class="topbar">
@@ -148,6 +148,23 @@
             <small id="live-timeline-state">Loading arrangement…</small>
           </header>
           <div id="arranger-style-timeline" class="style-timeline" aria-live="polite"></div>
+        </section>
+        <section id="imported-style-controls" class="imported-style-controls" hidden aria-label="Style sections and instruments">
+          <div class="style-section-choices">
+            <div><span class="control-label">Variation</span><div id="style-variations" class="variation-buttons"></div></div>
+            <label>Intro <select id="style-intro-choice" aria-label="Intro selection"></select></label>
+            <label>Ending <select id="style-ending-choice" aria-label="Ending selection"></select></label>
+            <span id="style-variation-state" role="status"></span>
+          </div>
+          <details class="style-mixer"><summary>Instruments &amp; mix</summary>
+            <div id="style-track-mixer"></div>
+            <button id="style-mix-reset" type="button">Reset mix</button>
+          </details>
+          <details class="style-source-details"><summary>Style details</summary>
+            <p id="style-source-attribution"></p>
+            <p id="style-source-patterns"></p>
+            <p>Playback uses sampled General MIDI sounds and local chord adaptation. Additional source chord patterns are preserved; automatic chord-pattern assignments require verified source rules.</p>
+          </details>
         </section>
         <div class="arranger-controls" aria-label="Arranger transport controls">
           <button id="arranger-intro" class="arranger-button" type="button">

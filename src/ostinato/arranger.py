@@ -14,7 +14,7 @@ import time
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from itertools import pairwise
 from typing import Protocol, cast
 
@@ -40,17 +40,18 @@ from ostinato.sfz_audio import (
 )
 from ostinato.soundfont_audio import SoundFontArrangementRenderer
 from ostinato.style_designer import CustomStyle
+from ostinato.styles.controls import StyleControls
 from ostinato.styles.groups import (
-    BUILT_IN_STYLE_GROUP,
     CUSTOM_STYLE_GROUP,
     imported_style_group,
+    musical_style_group,
 )
 from ostinato.styles.live_audio import (
     ImportedStyleArrangementRenderer,
     imported_style_playback_info,
     imported_style_rhythm_spans,
 )
-from ostinato.styles.models import Style
+from ostinato.styles.models import Style, StyleTrackRole
 
 JsonObject = dict[str, object]
 CHORD_COALESCE_NS = 12_000_000
@@ -381,6 +382,8 @@ class ArrangerAudio(Protocol):
         imported_style: Style | None = None,
     ) -> None: ...
 
+    def configure_style_controls(self, controls: StyleControls) -> None: ...
+
     def set_tempo(self, tempo_bpm: int) -> None: ...
 
     def set_chord(self, chord: ChordState | None) -> None: ...
@@ -437,6 +440,7 @@ class ProceduralArrangerAudio:
         )
         self._device: str | None = None
         self._session: RealtimeDemoArranger | None = None
+        self._style_controls = StyleControls()
 
     def configure_output(self, device: str | None) -> None:
         """Select an exact discovered route, closing an idle prior stream."""
@@ -486,7 +490,7 @@ class ProceduralArrangerAudio:
         ):
             return "sfizz · open sampled orchestra"
         if self._imported_style is not None and self._soundfont_path:
-            return f"FluidSynth · {self._soundfont_name} · local KORG import"
+            return f"FluidSynth · {self._soundfont_name}"
         if self._custom_style is None and self._sfz_style_paths is not None:
             return "sfizz · open sampled genre ensemble"
         if self._soundfont_path:
@@ -518,6 +522,23 @@ class ProceduralArrangerAudio:
         self._style_id = style_id
         self._custom_style = custom_style
         self._imported_style = imported_style
+
+    def configure_style_controls(self, controls: StyleControls) -> None:
+        self._style_controls = controls
+        if self._session is not None:
+            self._session.configure_style_controls(controls)
+
+    @property
+    def main_variation(self) -> int:
+        return (
+            self._session.main_variation
+            if self._session
+            else self._style_controls.variation
+        )
+
+    @property
+    def pattern_state(self) -> tuple[str, int] | None:
+        return self._session.pattern_state if self._session else None
 
     def set_tempo(self, tempo_bpm: int) -> None:
         self._tempo_bpm = tempo_bpm
@@ -647,6 +668,7 @@ class ProceduralArrangerAudio:
                     sink,
                     style_id=self._style_id,
                 )
+            self._session.configure_style_controls(self._style_controls)
             self._session.set_chord(self._chord)
             self._session.start()
         return self._session
@@ -666,6 +688,7 @@ class LiveArrangerService:
             raise ValueError("chord_coalesce_ns must be positive")
         first_style = next(iter(DEMO_STYLES.values()))
         self._audio = audio or ProceduralArrangerAudio()
+        self._style_controls = StyleControls()
         self._custom_styles: dict[str, CustomStyle] = {}
         self._imported_styles: dict[str, Style] = {}
         self._clock = clock
@@ -781,6 +804,14 @@ class LiveArrangerService:
             self._stop_style_preview()
             if action == "style":
                 self._select_style(value)
+            elif action in {
+                "variation",
+                "intro_select",
+                "ending_select",
+                "track_mix",
+                "mix_reset",
+            }:
+                self._configure_style_controls(action, value)
             elif action == "start":
                 self._start(intro=False)
             elif action == "stop":
@@ -841,6 +872,11 @@ class LiveArrangerService:
             command = "fill"
             value = 2
         try:
+            if action.startswith("variation_"):
+                command, value = "variation", int(action[-1])
+            elif action.startswith(("intro_", "ending_")):
+                command = action.rsplit("_", 1)[0]
+                self.command(f"{command}_select", int(action[-1]))
             self.command(command, value)
         except ArrangerError:
             return False
@@ -986,7 +1022,7 @@ class LiveArrangerService:
                     "beats_per_bar": style.beats_per_bar,
                     "provenance": style.provenance,
                     "custom": False,
-                    "group": BUILT_IN_STYLE_GROUP,
+                    "group": musical_style_group(style.name),
                 }
                 for style in DEMO_STYLES.values()
             ]
@@ -1011,8 +1047,7 @@ class LiveArrangerService:
                     "id": style.id,
                     "name": style.name,
                     "description": (
-                        "Local KORG import · CV1 · GM program approximation · "
-                        "Ostinato chord adaptation"
+                        "Sampled accompaniment · Ostinato chord adaptation"
                     ),
                     "default_tempo_bpm": self._imported_default_tempo(style),
                     "beats_per_bar": imported_style_playback_info(style).beats_per_bar,
@@ -1044,6 +1079,7 @@ class LiveArrangerService:
             "running": self._running,
             "section": section,
             "fill_variation": (self._audio.fill_variation if self._running else None),
+            "style_controls": self._style_control_snapshot(imported_style),
             "sync_enabled": self._sync_enabled,
             "sync_stop_bars": SYNC_STOP_BARS,
             "chord": self._harmony_name(),
@@ -1129,6 +1165,8 @@ class LiveArrangerService:
             custom_style.base_style_id if custom_style is not None else self._style_id
         )
         self._audio.select_style(base_style_id, custom_style, imported_style)
+        if imported_style is not None:
+            self._audio.configure_style_controls(self._style_controls)
         self._audio.set_tempo(self._tempo_bpm)
         self._audio.set_chord(self._chord)
 
@@ -1167,7 +1205,98 @@ class LiveArrangerService:
             self._tempo_source = "style default"
         self._intro_armed = False
         self._audio.select_style(base_style_id, custom_style, imported_style)
+        self._style_controls = StyleControls()
+        if imported_style is not None:
+            self._audio.configure_style_controls(self._style_controls)
         self._audio.set_tempo(self._tempo_bpm)
+
+    def _configure_style_controls(self, action: str, value: object) -> None:
+        style = self._imported_styles.get(self._style_id)
+        if style is None:
+            raise ArrangerError(
+                "section selection and track mix require an imported style"
+            )
+        info = imported_style_playback_info(style)
+        controls = self._style_controls
+        if action == "mix_reset":
+            controls = replace(controls, tracks=())
+        elif action == "track_mix":
+            try:
+                controls = controls.update_track(value)
+            except ValueError as error:
+                raise ArrangerError(str(error)) from error
+            roles = {
+                track.role
+                for pattern in info.sections.values()
+                for track in pattern.tracks
+            }
+            if any(track.role not in roles for track in controls.tracks):
+                raise ArrangerError("this style does not contain that track")
+        else:
+            kind = action.removesuffix("_select")
+            if type(value) is not int or f"{kind}_{value}" not in info.sections:
+                raise ArrangerError(f"this style has no {kind} {value}")
+            if kind == "variation":
+                controls = replace(controls, variation=value)
+            elif kind == "intro":
+                controls = replace(controls, intro=value)
+            else:
+                controls = replace(controls, ending=value)
+        self._audio.configure_style_controls(controls)
+        self._style_controls = controls
+
+    def _style_control_snapshot(self, style: Style | None) -> JsonObject | None:
+        if style is None:
+            return None
+        info = imported_style_playback_info(style)
+        choices = {
+            kind: sorted(
+                int(name.rsplit("_", 1)[1])
+                for name in info.sections
+                if name.startswith(kind + "_")
+            )
+            for kind in ("variation", "intro", "ending", "fill")
+        }
+        roles = {
+            track.role for pattern in info.sections.values() for track in pattern.tracks
+        }
+        controls = self._style_controls
+        pattern_state = (
+            getattr(self._audio, "pattern_state", None) if self._running else None
+        )
+        return {
+            "available": choices,
+            "active_section": pattern_state[0]
+            if pattern_state
+            else f"variation_{controls.variation}",
+            "pattern_origin_ticks": pattern_state[1] if pattern_state else 0,
+            "variation": controls.variation,
+            "active_variation": getattr(
+                self._audio, "main_variation", controls.variation
+            )
+            if self._running
+            else controls.variation,
+            "intro": controls.intro,
+            "ending": controls.ending,
+            "tracks": [
+                {
+                    "role": role.value,
+                    "name": "Accompaniment " + role.value[-1]
+                    if role.value.startswith("acc")
+                    else role.value.title(),
+                    "volume": controls.track(role).volume,
+                    "muted": controls.track(role).muted,
+                    "solo": controls.track(role).solo,
+                    "audible": controls.audible(role),
+                }
+                for role in StyleTrackRole
+                if role in roles
+            ],
+            "source_patterns": {
+                element.type.value: [cv.number for cv in element.chord_variations]
+                for element in style.elements
+            },
+        }
 
     def _current_definition(self) -> DemoStyleDefinition:
         custom_style = self._custom_styles.get(self._style_id)
@@ -1239,7 +1368,12 @@ class LiveArrangerService:
         tempo = self._rhythm_tracker.observe(
             timestamp_ns,
             beat_spans=(
-                imported_style_rhythm_spans(imported_style)
+                imported_style_rhythm_spans(
+                    imported_style,
+                    variation_number=getattr(
+                        self._audio, "main_variation", self._style_controls.variation
+                    ),
+                )
                 if imported_style is not None
                 else style_rhythm_spans(
                     self._current_definition().id,

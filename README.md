@@ -36,7 +36,7 @@ a separate channel.
 - Show a compact meter-aware beat indicator for 2/4, 3/4, and 4/4 styles.
 - Render all fourteen built-ins through genre-profiled sfizz racks of open
   multi-sampled piano, guitars, upright/electric basses, orchestral voices, and
-  live drums/percussion; 105 deduplicated host-local KORG imports and custom
+  live drums/percussion; deduplicated host-local style imports and custom
   styles use FluidSynth with the MuseScore General HQ General MIDI
   approximation.
 - Build, preview, save, reopen, update, and delete custom styles without a
@@ -194,12 +194,31 @@ Ostinato never silently substitutes another MIDI port or audio sink.
 Shortcuts are ignored while a form field or dialog has focus.
 
 After saving the MIDI profile, **Performance controls** can learn an exact raw
-MIDI message or short message sequence for each of the six section actions.
+MIDI message or short message sequence for transport actions or any available
+imported-style section.
 Learning never assumes an FR-4X channel or proprietary control encoding. Notes,
 pressure, pitch bend, clock, active sensing, and bellows expression CC11 are
 excluded, and the learned controls run in the backend even if the browser is
 reloaded. Re-running MIDI setup for a different input clears the bindings;
 re-running it for the same exact input preserves them.
+
+Imported styles expose their available **Variations 1–4**, **Intro 1–2**, and
+**Ending 1–2**. Choose a variation while playing to switch at the next bar;
+a fill already queued or playing finishes before the new variation begins.
+Intro and ending selections apply to their next trigger. The orchestra map
+follows the section actually sounding, including its source phrase length.
+
+Open **Instruments & mix** for individual drum, percussion, bass, and
+accompaniment mute, solo, and volume controls. Solo can include multiple tracks;
+mute takes priority. **Reset mix** restores the source balance. Choices survive
+browser reloads and reset when another style is selected; they are not saved
+as permanent edits to source files.
+
+**Style group** now uses musical categories across source packages. The style
+selector shows plain names; **Style details** retains source attribution and
+export limitations. All exported chord patterns are preserved, while live
+playback uses CV1 and Ostinato's existing chord adaptation. This does not
+reproduce unavailable source sounds, effects, or proprietary chord tables.
 
 ## Host development
 
@@ -311,7 +330,7 @@ Do not commit machine-specific copies of these files.
 - [Computer-only testing](docs/computer-only-testing.md)
 - [Style sources and licenses](docs/style-library-sources.md)
 - [Local KORG style import workspace](assets/styles/korg/README.md)
-- [Current live KORG library evidence](docs/evidence/w42-korg-library-groups-and-deduplication.md)
+- [Expanded style controls and library evidence](docs/evidence/w45-expanded-style-controls.md)
 - [Style-pack evidence and provenance boundary](docs/evidence/w25-licensed-groove-style-pack.md)
 
 ## License

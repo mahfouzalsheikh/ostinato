@@ -14,6 +14,14 @@ PerformanceControlAction = Literal[
     "ending",
     "start",
     "stop",
+    "variation_1",
+    "variation_2",
+    "variation_3",
+    "variation_4",
+    "intro_1",
+    "intro_2",
+    "ending_1",
+    "ending_2",
 ]
 PERFORMANCE_CONTROL_ACTIONS: tuple[PerformanceControlAction, ...] = (
     "intro",
@@ -22,6 +30,14 @@ PERFORMANCE_CONTROL_ACTIONS: tuple[PerformanceControlAction, ...] = (
     "ending",
     "start",
     "stop",
+    "variation_1",
+    "variation_2",
+    "variation_3",
+    "variation_4",
+    "intro_1",
+    "intro_2",
+    "ending_1",
+    "ending_2",
 )
 MAX_MESSAGES_PER_BINDING = 8
 CONTROL_SEQUENCE_WINDOW_NS = 400_000_000

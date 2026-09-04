@@ -1,7 +1,6 @@
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
 const PRIORITY_GROUPS = new Map([
-  ["Built-in styles", 0],
   ["My styles", 1],
 ]);
 

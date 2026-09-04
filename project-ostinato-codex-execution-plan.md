@@ -14,15 +14,15 @@ FR-4X.
 The maintained product includes:
 
 - a guided MIDI input/output setup wizard with saved role detection;
-- exact learned MIDI fingerprints for six accordion-controlled arranger
+- exact learned MIDI fingerprints for transport and imported-style section
   actions, without guessed FR-4X messages;
 - real-time 39-key piano and 120-button Stradella visualization;
 - a backend-owned arranger with style-shaped intro/main/ending, two one-bar
   Fill Ins, chord-aware monophonic section solos, sync, fixed tempo, and
   left-hand tempo following;
 - fourteen built-in four-bar styles with genre-profiled open-sample SFZ racks,
-  plus sampled General MIDI rendering for custom styles and 105 deduplicated,
-  grouped host-local KORG imports;
+  plus sampled General MIDI rendering for custom styles and a deduplicated,
+  musically grouped host-local KORG library with all exportable source patterns;
 - an advanced custom-style designer with editable instrumentation, mix,
   register, articulation, meter, phrase length, and live unsaved preview;
 - explicit PipeWire/Bluetooth or ALSA accompaniment-output selection;
@@ -109,9 +109,10 @@ pipenv run ostinato keyboard --keys 'zagxgq'
 pipenv run scripts/run-checks.sh
 ```
 
-The complete check script runs Python tests, browser JavaScript tests, Ruff
-format/lint, and strict mypy. Tests must stay independent of MIDI and audio
-hardware. Use dependency injection and fake synth/MIDI boundaries.
+The check script runs Python tests, Ruff format/lint, and strict mypy. Run
+`node --test tests/web/*.test.mjs` for the browser JavaScript tests. Tests must
+stay independent of MIDI and audio hardware. Use dependency injection and fake
+synth/MIDI boundaries.
 
 For a deployed change:
 
@@ -137,6 +138,10 @@ Preserve unrelated worktree changes. Use reversible cleanup where possible and
 never replace saved machine-specific state with guessed defaults.
 
 ## Current evidence and provenance
+
+- `docs/evidence/w45-expanded-style-controls.md` records expanded source exports,
+  all four main variations, additional intros/endings, per-track mix, musical
+  browsing categories, and the current listening gate.
 
 - `docs/evidence/w44-learned-midi-performance-controls.md` records the exact
   fingerprint-learning design, excluded musical/bellows signals, automated

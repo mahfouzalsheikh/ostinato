@@ -6,34 +6,39 @@ import hashlib
 import json
 from dataclasses import fields
 
-from ostinato.styles.live_audio import REQUIRED_SECTIONS
 from ostinato.styles.models import Style, StyleEvent
 
 
 def live_style_fingerprint(style: Style) -> str:
-    """Hash only data that can affect the five live CV1 sections."""
+    """Hash every exported section and chord pattern, independent of identity."""
 
     sections: list[object] = []
-    for name, element_type in REQUIRED_SECTIONS.items():
-        element = next(item for item in style.elements if item.type is element_type)
-        variation = next(item for item in element.chord_variations if item.number == 1)
-        sections.append(
-            {
-                "name": name,
-                "length_ticks": variation.length_ticks,
-                "tracks": [
-                    {
-                        "role": track.role.value,
-                        "midi_channel": track.midi_channel,
-                        "program": track.program,
-                        "bank_msb": track.bank_msb,
-                        "bank_lsb": track.bank_lsb,
-                        "events": [_event_payload(event) for event in track.events],
-                    }
-                    for track in variation.tracks
-                ],
-            }
-        )
+    for element in sorted(style.elements, key=lambda item: item.type.value):
+        for variation in sorted(
+            element.chord_variations, key=lambda item: item.number or 0
+        ):
+            sections.append(
+                {
+                    "name": element.type.value,
+                    "chord_variation": variation.number,
+                    "source_chord": variation.source_chord,
+                    "length_ticks": variation.length_ticks,
+                    "tracks": [
+                        {
+                            "role": track.role.value,
+                            "midi_channel": track.midi_channel,
+                            "program": track.program,
+                            "bank_msb": track.bank_msb,
+                            "bank_lsb": track.bank_lsb,
+                            "events": [_event_payload(event) for event in track.events],
+                        }
+                        for track in sorted(
+                            variation.tracks,
+                            key=lambda item: (item.role.value, item.midi_channel or 0),
+                        )
+                    ],
+                }
+            )
     payload = {
         "ticks_per_beat": style.ticks_per_beat,
         "time_signature": style.time_signature,

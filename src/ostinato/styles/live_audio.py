@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import heapq
 import math
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from itertools import pairwise
@@ -17,6 +18,7 @@ from ostinato.computer_audio import (
 from ostinato.domain import ChordQuality, ChordState
 from ostinato.keyboard_input import MAX_TEMPO_BPM, MIN_TEMPO_BPM
 from ostinato.soundfont_audio import FluidSynthEngine
+from ostinato.styles.controls import StyleControls
 from ostinato.styles.models import (
     ChordVariation,
     ControlChangeEvent,
@@ -76,7 +78,23 @@ class _QueuedAction:
     action: _Action = field(compare=False)
 
 
+_PLAYBACK_CACHE: OrderedDict[int, tuple[Style, ImportedStylePlaybackInfo]] = (
+    OrderedDict()
+)
+
+
 def imported_style_playback_info(style: Style) -> ImportedStylePlaybackInfo:
+    cached = _PLAYBACK_CACHE.get(id(style))
+    if cached is not None and cached[0] is style:
+        return cached[1]
+    info = _read_playback_info(style)
+    _PLAYBACK_CACHE[id(style)] = (style, info)
+    if len(_PLAYBACK_CACHE) > 256:
+        _PLAYBACK_CACHE.popitem(last=False)
+    return info
+
+
+def _read_playback_info(style: Style) -> ImportedStylePlaybackInfo:
     """Validate the deliberately bounded CV1 live-playback policy."""
 
     if style.version != 1:
@@ -99,6 +117,12 @@ def imported_style_playback_info(style: Style) -> ImportedStylePlaybackInfo:
         if variation is None:
             raise ValueError(f"imported style has no {element_type.value} CV1")
         sections[name] = variation
+    for element in style.elements:
+        variation = next(
+            (item for item in element.chord_variations if item.number == 1), None
+        )
+        if variation is not None:
+            sections[element.type.value] = variation
     bass_notes = sorted(
         (
             event
@@ -126,11 +150,13 @@ def imported_style_playback_info(style: Style) -> ImportedStylePlaybackInfo:
     return ImportedStylePlaybackInfo(sections, beats_per_bar, anchor_notes[0].note % 12)
 
 
-def imported_style_rhythm_spans(style: Style) -> tuple[float, ...]:
+def imported_style_rhythm_spans(
+    style: Style, *, variation_number: int = 1
+) -> tuple[float, ...]:
     """Derive live-tempo candidate gaps from CV1 bass and accompaniment attacks."""
 
     info = imported_style_playback_info(style)
-    variation = info.sections["main"]
+    variation = info.sections[f"variation_{variation_number}"]
     positions = sorted(
         {
             event.start_tick / style.ticks_per_beat
@@ -177,6 +203,16 @@ class ImportedStyleArrangementRenderer:
     ) -> None:
         self._style = style
         self._info = imported_style_playback_info(style)
+        self._actions = {
+            id(pattern): _variation_actions(pattern)
+            for pattern in self._info.sections.values()
+        }
+        self._controls = StyleControls()
+        self._main_variation = 1
+        self._intro_number = 1
+        self._ending_number = 1
+        self._variation_at_tick: int | None = None
+        self._source_volumes: dict[int, int] = {}
         self._config = config
         self._engine = engine_factory(config, soundfont_path)
         self._engine.set_gain(0.65)
@@ -229,15 +265,70 @@ class ImportedStyleArrangementRenderer:
         self._advance_state(self._beat_at_frame(self._frame_position))
         return self._fill_variation
 
+    @property
+    def main_variation(self) -> int:
+        return self._main_variation
+
+    @property
+    def pattern_state(self) -> tuple[str, int]:
+        beat = self._beat_at_frame(self._frame_position)
+        _, origin, token = self._active_pattern(beat)
+        return token[0], round(origin * TRANSPORT_TICKS_PER_BEAT)
+
+    def configure_style_controls(self, controls: StyleControls) -> None:
+        for kind, number in (
+            ("variation", controls.variation),
+            ("intro", controls.intro),
+            ("ending", controls.ending),
+        ):
+            if f"{kind}_{number}" not in self._info.sections:
+                raise ValueError(f"style has no {kind} {number}")
+        old = self._controls
+        self._controls = controls
+        if controls.variation != old.variation:
+            if controls.variation == self._main_variation:
+                self._variation_at_tick = None
+            elif self._section is DemoSection.MAIN and self._frame_position > 0:
+                self._variation_at_tick = round(
+                    self._next_bar(self._beat_at_frame(self._frame_position))
+                    * TRANSPORT_TICKS_PER_BEAT
+                )
+            else:
+                self._main_variation = controls.variation
+                self._active_token = None
+        roles = {
+            track.midi_channel: track.role
+            for variation in self._info.sections.values()
+            for track in variation.tracks
+            if track.midi_channel is not None
+        }
+        for channel, role in roles.items():
+            if old.audible(role) and not controls.audible(role):
+                self._engine.control_change(channel, 120, 0)
+                self._engine.control_change(channel, 123, 0)
+            self._engine.control_change(
+                channel,
+                7,
+                round(
+                    self._source_volumes.get(channel, 100)
+                    * controls.track(role).volume
+                    / 100
+                ),
+            )
+
     def set_tempo(self, tempo_bpm: int) -> None:
         if not MIN_TEMPO_BPM <= tempo_bpm <= MAX_TEMPO_BPM:
             raise ValueError(
                 f"tempo_bpm must be between {MIN_TEMPO_BPM} and {MAX_TEMPO_BPM}"
             )
         beat = self._beat_at_frame(self._frame_position)
+        pending = [(event, self._beat_at_frame(event.frame)) for event in self._events]
         self._tempo_epoch_frame = self._frame_position
         self._tempo_epoch_beat = beat
         self._tempo_bpm = tempo_bpm
+        for event, event_beat in pending:
+            event.frame = self._frame_at_beat(event_beat)
+        heapq.heapify(self._events)
 
     def reset(self) -> None:
         self._all_sound_off()
@@ -245,6 +336,8 @@ class ImportedStyleArrangementRenderer:
         self._tempo_epoch_frame = 0
         self._tempo_epoch_beat = 0.0
         self._section = DemoSection.MAIN
+        self._main_variation = self._controls.variation
+        self._variation_at_tick = None
         self._section_start_beat = 0.0
         self._main_start_beat = 0.0
         self._ending_at_beat = None
@@ -260,10 +353,12 @@ class ImportedStyleArrangementRenderer:
     def start_intro(self) -> None:
         self.reset()
         self._section = DemoSection.INTRO
+        self._intro_number = self._controls.intro
 
     def stop(self) -> None:
         self._all_sound_off()
         self._section = DemoSection.STOPPED
+        self._variation_at_tick = None
         self._ending_at_beat = None
         self._fill_at_beat = None
         self._fill_variation = None
@@ -272,6 +367,7 @@ class ImportedStyleArrangementRenderer:
         if self.section is DemoSection.STOPPED:
             return
         beat = self._beat_at_frame(self._frame_position)
+        self._ending_number = self._controls.ending
         self._ending_at_beat = self._next_bar(beat)
 
     def request_fill(self, variation: int) -> None:
@@ -342,21 +438,25 @@ class ImportedStyleArrangementRenderer:
         self, beat: float
     ) -> tuple[ChordVariation, float, tuple[str, int]]:
         if self._section is DemoSection.INTRO:
-            return self._info.sections["intro"], self._section_start_beat, ("intro", 0)
+            return (
+                self._info.sections[f"intro_{self._intro_number}"],
+                self._section_start_beat,
+                (f"intro_{self._intro_number}", 0),
+            )
         if self._section is DemoSection.ENDING:
             return (
-                self._info.sections["ending"],
+                self._info.sections[f"ending_{self._ending_number}"],
                 self._section_start_beat,
-                ("ending", 0),
+                (f"ending_{self._ending_number}", 0),
             )
         if self._fill_at_beat is not None and beat >= self._fill_at_beat:
             name = f"fill_{self._fill_variation}"
             return self._info.sections[name], self._fill_at_beat, (name, 0)
-        main = self._info.sections["main"]
+        main = self._info.sections[f"variation_{self._main_variation}"]
         length = self._length_beats(main)
         cycle = max(0, math.floor((beat - self._main_start_beat) / length))
         origin = self._main_start_beat + cycle * length
-        return main, origin, ("main", cycle)
+        return main, origin, (f"variation_{self._main_variation}", cycle)
 
     def _playback_stopped(self) -> bool:
         return self._section is DemoSection.STOPPED
@@ -365,6 +465,10 @@ class ImportedStyleArrangementRenderer:
         self, beat: float, variation: ChordVariation, origin: float
     ) -> float:
         candidates = [origin + self._length_beats(variation)]
+        if self._variation_at_tick is not None:
+            switch_beat = self._variation_at_tick / TRANSPORT_TICKS_PER_BEAT
+            if switch_beat > beat:
+                candidates.append(switch_beat)
         if self._ending_at_beat is not None and self._ending_at_beat > beat:
             candidates.append(self._ending_at_beat)
         if self._fill_at_beat is not None and self._fill_at_beat > beat:
@@ -373,6 +477,21 @@ class ImportedStyleArrangementRenderer:
 
     def _advance_state(self, beat: float) -> None:
         epsilon = 1e-7
+        if self._variation_at_tick is not None and self._fill_at_beat is not None:
+            fill_end = self._fill_at_beat + self._length_beats(
+                self._info.sections[f"fill_{self._fill_variation}"]
+            )
+            switch_beat = self._variation_at_tick / TRANSPORT_TICKS_PER_BEAT
+            if self._fill_at_beat <= switch_beat < fill_end:
+                self._variation_at_tick = round(fill_end * TRANSPORT_TICKS_PER_BEAT)
+        if (
+            self._variation_at_tick is not None
+            and beat + epsilon >= self._variation_at_tick / TRANSPORT_TICKS_PER_BEAT
+        ):
+            self._main_variation = self._controls.variation
+            self._main_start_beat = self._variation_at_tick / TRANSPORT_TICKS_PER_BEAT
+            self._variation_at_tick = None
+            self._active_token = None
         if (
             self._ending_at_beat is not None
             and beat + epsilon >= self._ending_at_beat
@@ -386,7 +505,7 @@ class ImportedStyleArrangementRenderer:
             self._active_token = None
         if self._section is DemoSection.INTRO:
             end = self._section_start_beat + self._length_beats(
-                self._info.sections["intro"]
+                self._info.sections[f"intro_{self._intro_number}"]
             )
             if beat + epsilon >= end:
                 self._section = DemoSection.MAIN
@@ -395,7 +514,7 @@ class ImportedStyleArrangementRenderer:
                 self._active_token = None
         if self._section is DemoSection.ENDING:
             end = self._section_start_beat + self._length_beats(
-                self._info.sections["ending"]
+                self._info.sections[f"ending_{self._ending_number}"]
             )
             if beat + epsilon >= end:
                 self.stop()
@@ -415,7 +534,7 @@ class ImportedStyleArrangementRenderer:
         end_beat: float,
         chord: ChordState,
     ) -> None:
-        for action in _variation_actions(variation):
+        for action in self._actions[id(variation)]:
             absolute_beat = origin + action.tick / self._style.ticks_per_beat
             if start_beat - 1e-9 <= absolute_beat < end_beat - 1e-9:
                 transformed = action
@@ -458,12 +577,18 @@ class ImportedStyleArrangementRenderer:
 
     def _dispatch(self, action: _Action) -> None:
         if action.kind == "note_on":
+            if not self._controls.audible(action.role):
+                return
             self._engine.note_on(action.channel, action.first, action.second)
             self._silent = False
         elif action.kind == "note_off":
             self._engine.note_off(action.channel, action.first)
         elif action.kind == "control_change":
-            self._engine.control_change(action.channel, action.first, action.second)
+            value = action.second
+            if action.first == 7:
+                self._source_volumes[action.channel] = value
+                value = round(value * self._controls.track(action.role).volume / 100)
+            self._engine.control_change(action.channel, action.first, value)
         elif action.kind == "program_change":
             bank = 128 if action.role in PERCUSSION_ROLES else 0
             program = 0 if action.role in PERCUSSION_ROLES else action.first

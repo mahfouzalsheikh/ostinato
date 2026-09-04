@@ -39,3 +39,28 @@ def test_distinguishes_one_changed_live_note() -> None:
     )
 
     assert duplicate_live_style_groups((original, changed)) == ()
+
+
+def test_preserves_aliases_that_differ_only_in_a_later_variation() -> None:
+    from tests.unit.test_imported_style_live import expanded_style
+
+    original = expanded_style()
+    extra = original.elements[-1]
+    changed = replace(original, id="korg-extra", elements=original.elements[:-1])
+    assert extra.type.value == "ending_2"
+    assert duplicate_live_style_groups((original, changed)) == ()
+
+
+def test_preserves_different_higher_chord_patterns() -> None:
+    original = _style()
+    first = original.elements[0]
+    extra = replace(first.chord_variations[0], number=2)
+    changed = replace(
+        original,
+        id="korg-cv2",
+        elements=(
+            replace(first, chord_variations=(*first.chord_variations, extra)),
+            *original.elements[1:],
+        ),
+    )
+    assert duplicate_live_style_groups((original, changed)) == ()

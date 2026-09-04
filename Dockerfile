@@ -85,7 +85,6 @@ RUN apt-get update \
         usbutils \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /app/.venv /app/.venv
 COPY --from=sfizz-builder /opt/sfizz/ /usr/local/
 COPY --from=sample-assets /opt/ostinato-samples/ /opt/ostinato-samples/
 # Shinyguitar expects its Aria bank to define $sample_dir. Direct sfizz loading
@@ -97,6 +96,8 @@ RUN sed --in-place 's|default_path=$sample_dir/|default_path=../Samples/|' \
         '/opt/ostinato-samples/Shinyguitar/Programs/main.sfz' \
         > '/opt/ostinato-samples/Shinyguitar/Programs/acoustic-main.sfz'
 RUN ldconfig
+# Keep code-dependent environment changes after the large, stable sample layers.
+COPY --from=builder /app/.venv /app/.venv
 COPY . .
 
 ENTRYPOINT ["ostinato"]

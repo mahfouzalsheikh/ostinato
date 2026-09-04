@@ -8,30 +8,30 @@ import {
 } from "../../src/ostinato/web_static/style-groups.js";
 
 const styles = [
-  { id: "builtin", name: "Tango", group: "Built-in styles" },
-  { id: "v10-b", name: "Zulu", group: "KORG Styles · Volume 10" },
-  { id: "v2-b", name: "Beta", group: "KORG Styles · Volume 2" },
-  { id: "v2-a", name: "Alpha", group: "KORG Styles · Volume 2" },
+  { id: "builtin", name: "Tango", group: "Latin & Tango" },
+  { id: "v10-b", name: "Zulu", group: "Jazz, Swing & Blues" },
+  { id: "v2-b", name: "Beta", group: "Ballads" },
+  { id: "v2-a", name: "Alpha", group: "Ballads" },
   { id: "mine", name: "Mine", group: "My styles" },
 ];
 
-test("groups keep product groups first and sort KORG volumes naturally", () => {
+test("groups keep personal styles first and alphabetize musical categories", () => {
   assert.deepEqual(styleGroups(styles), [
-    "Built-in styles",
     "My styles",
-    "KORG Styles · Volume 2",
-    "KORG Styles · Volume 10",
+    "Ballads",
+    "Jazz, Swing & Blues",
+    "Latin & Tango",
   ]);
 });
 
 test("styles are filtered and alphabetized within a group", () => {
   assert.deepEqual(
-    stylesInGroup(styles, "KORG Styles · Volume 2").map((style) => style.id),
+    stylesInGroup(styles, "Ballads").map((style) => style.id),
     ["v2-a", "v2-b"],
   );
 });
 
 test("the selected style resolves its current group", () => {
-  assert.equal(groupForStyle(styles, "v10-b"), "KORG Styles · Volume 10");
+  assert.equal(groupForStyle(styles, "v10-b"), "Jazz, Swing & Blues");
   assert.equal(groupForStyle(styles, "missing"), null);
 });

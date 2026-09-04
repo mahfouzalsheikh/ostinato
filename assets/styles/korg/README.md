@@ -71,9 +71,9 @@ uses General MIDI programs only as an explicit approximation.
 The web service also discovers converted `*/style.json` documents from
 `OSTINATO_KORG_STYLE_DIRECTORY` (this `converted/` directory by default).
 Compose mounts it read-only and the arranger provides a library-group selector
-before the filtered style selector. Live playback deliberately uses Variation
-1 CV1 plus CV1 of
-Intro 1, Fill 1/2, and Ending 1. Because the SMFs omit NTT/key settings,
+before the filtered style selector. Live playback exposes CV1 of all available
+Variations 1–4, Intros 1–2, Fills 1–2, and Endings 1–2. All exported higher
+Chord Variations remain in the JSON without guessed automatic assignments. Because the SMFs omit NTT/key settings,
 Ostinato root-transposes melodic parts and adapts chord thirds/fifths/sevenths
 using its documented local policy; it never transposes Drum or Percussion note
 numbers. The source anchor is CV1's first Bass note, or the lowest melodic note
@@ -81,8 +81,8 @@ at the earliest CV1 onset when no Bass part is present. See
 [`W40`](../../../docs/evidence/w40-korg-volume-2-library.md) for the current
 policy and verification boundary.
 
-Exact duplicates are defined over those five live sections, including track
-roles, programs, banks, and events. Audit the local catalog with:
+Exact duplicates are defined over every exported section and Chord Variation,
+including pattern lengths, track roles, programs, banks, and events. Audit the local catalog with:
 
 ```bash
 pipenv run python scripts/audit_korg_styles.py --fail-on-duplicates
@@ -96,3 +96,13 @@ pipenv run python scripts/audit_korg_styles.py --fail-on-duplicates
 - `converted/`: generated vendor-neutral JSON styles
 
 Only this documentation and `downloads/README.md` are tracked.
+
+
+For verified bulk extraction, see
+[`scripts/korg_converter`](../../../scripts/korg_converter/README.md). The driver
+reads and checks the utility's actual tree and filenames before exporting every
+available pattern. `scripts/import_korg_pa80_bank.py` accepts additional sections
+beyond the original required five. `scripts/prepare_korg_library.py` stages a
+full-export library, preserves existing source IDs, reconsiders prior aliases,
+and writes an explicit rejection/duplicate report without replacing the active
+library. Review that report before promoting the staged directory.

@@ -47,8 +47,9 @@ wizard again after changing the instrument's MIDI transmission setup.
 ## Learn accordion performance controls
 
 After saving the MIDI profile and connecting its exact input, choose
-**Performance controls**. Six independent rows can learn **Intro**,
-**Fill In 1**, **Fill In 2**, **Ending**, **Start**, and **Stop**:
+**Performance controls**. Independent rows can learn **Intro**, **Fill In 1**,
+**Fill In 2**, **Ending**, **Start**, **Stop**, and numbered variations, intros,
+and endings for imported styles:
 
 1. Choose **Learn** beside one action.
 2. Press its assigned accordion function switch once.
@@ -139,13 +140,32 @@ An attributed human-groove pack adds:
 - **Blues Shuffle** — 4/4 at 112 BPM, with triplet bass movement, shuffle
   comping, and responsive fills.
 
-The arranger's **Style group** selector separates built-ins, saved custom
-styles, and each imported KORG library. Choose the group first, then choose a
-style from the filtered **Style** selector. The deployed host-local library has
-105 deduplicated KORG styles across Volumes 1–7, Piano Styles, Real Drums, and
-Turkish Arabic World. Imported styles use the bounded five-section CV1 policy
-and a General MIDI listening approximation; they do not claim original KORG
-sounds or unavailable proprietary chord-transposition semantics.
+The arranger's **Style group** selector browses musical categories across
+built-in and imported styles: Ballads, Latin & Tango, Waltzes, Folk & World,
+Jazz, Swing & Blues, Funk & Soul, Dance & Reggae, Country & Rock 'n' Roll,
+Piano & Orchestral, Arabic & Turkish, and Acoustic & Pop. Saved custom styles
+remain under My styles. Categories are editorial name/source-based choices,
+not claims of verified source genre metadata. Style names have no vendor suffix;
+source attribution remains in the expandable Style details panel.
+
+Imported styles expose every available CV1 main variation, intro, and ending.
+Variation changes are scheduled at the next bar, after an overlapping fill's
+full duration. Intro and ending choices apply at their next trigger. The
+orchestra map follows the active source section and phrase origin. Missing
+sections are omitted from the choices. The Instruments & mix panel provides
+mute, solo, and a relative 0–100% volume for each present source role; source
+volume automation is retained under that multiplier. Multiple solos combine,
+and mute wins over solo. Muting immediately silences the affected voices.
+Selections and mix survive browser reloads but reset on style selection; they
+are session controls, not permanently saved source edits.
+
+The learned-control dialog also offers Variation 1–4, Intro 1–2, and Ending 1–2.
+Existing Intro and Ending bindings trigger the currently selected section.
+Unavailable numbered actions are rejected without interrupting MIDI monitoring.
+Higher source chord patterns are preserved in the library but are not assigned
+to detected chords without verified source rules. Sounds remain General MIDI
+approximations; original effects and proprietary chord-transposition tables
+are unavailable through this export route.
 
 Choose **Style designer** while playback is stopped to make an editable style.
 Select a 2/4, 3/4, or 4/4 measure first; the designer then offers only rhythmic

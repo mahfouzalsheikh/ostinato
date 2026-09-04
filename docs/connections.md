@@ -85,3 +85,11 @@ The Raspberry Pi replaces the laptop only after the laptop POC passes its
 latency, endurance, and rehearsal gates. The same safety boundary remains:
 FR-4X analog output goes directly to the mixer, while USB MIDI enters the Pi
 and accompaniment audio leaves through the selected Pi audio interface.
+
+
+Imported-style section choices can also be learned individually: Variation
+1–4, Intro 1–2, and Ending 1–2. Choose whichever actions fit the available
+physical switches. Existing generic Intro and Ending bindings use the selected
+intro/ending number. Availability depends on the selected style. This adds no
+assumed FR-4X messages or channels; each assignment still requires an observed
+fingerprint and physical verification.

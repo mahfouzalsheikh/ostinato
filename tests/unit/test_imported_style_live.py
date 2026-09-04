@@ -251,3 +251,180 @@ def _element(
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def expanded_style() -> Style:
+    style = _style()
+    return replace(
+        style,
+        elements=(
+            *style.elements,
+            _element(StyleElementType.VARIATION_2, 384, ((0, 36, 90),), 69),
+            _element(StyleElementType.VARIATION_3, 192, ((0, 36, 90),), 72),
+            _element(StyleElementType.VARIATION_4, 192, ((0, 36, 90),), 76),
+            _element(StyleElementType.INTRO_2, 192, ((0, 36, 90),), 74),
+            _element(StyleElementType.ENDING_2, 192, ((0, 36, 90),), 77),
+        ),
+    )
+
+
+class ExpandedStyleTests(unittest.TestCase):
+    def setUp(self) -> None:
+        from ostinato.styles.controls import StyleControls
+
+        self.controls = StyleControls()
+        self.synth = FakeSynth()
+        self.renderer = ImportedStyleArrangementRenderer(
+            expanded_style(),
+            DemoAudioConfig(tempo_bpm=120, sample_rate=1_000, chunk_frames=10),
+            "/configured/test.sf2",
+            engine_factory=lambda _config, _path: self.synth,
+        )
+        self.chord = ChordState(0, ChordQuality.MAJOR, None, 1.0, ("test",), 0)
+
+    def tearDown(self) -> None:
+        self.renderer.close()
+
+    def test_switches_variation_at_next_bar_and_restarts_new_phrase(self) -> None:
+        self.renderer.render(250, self.chord)
+        self.renderer.configure_style_controls(replace(self.controls, variation=2))
+        self.renderer.render(749, self.chord)
+        self.assertEqual(self.renderer.main_variation, 1)
+        self.renderer.render(2, self.chord)
+        self.assertEqual(self.renderer.main_variation, 2)
+        self.assertIn((1000, 11, 69, 80), self.synth.note_ons)
+        self.renderer.render(2000, self.chord)
+        self.assertIn((3000, 11, 69, 80), self.synth.note_ons)
+
+    def test_selected_intro_and_ending_keep_their_full_source_lengths(self) -> None:
+        self.renderer.configure_style_controls(
+            replace(self.controls, variation=3, intro=2, ending=2)
+        )
+        self.renderer.start_intro()
+        self.renderer.render(1001, self.chord)
+        self.assertIn((0, 11, 74, 80), self.synth.note_ons)
+        self.assertIn((1000, 11, 72, 80), self.synth.note_ons)
+        self.renderer.request_ending()
+        self.renderer.render(1500, self.chord)
+        self.assertEqual(self.renderer.section, DemoSection.ENDING)
+        self.assertIn((2000, 11, 77, 80), self.synth.note_ons)
+        self.renderer.render(500, self.chord)
+        self.assertEqual(self.renderer.section, DemoSection.STOPPED)
+
+    def test_mix_silences_active_notes_and_solo_preserves_only_selected_role(
+        self,
+    ) -> None:
+        self.renderer.render(100, self.chord)
+        self.renderer.configure_style_controls(
+            self.controls.update_track({"role": "bass", "muted": True})
+        )
+        self.assertIn((100, 8, 120, 0), self.synth.controls)
+        self.renderer.render(500, self.chord)
+        self.assertFalse(
+            any(
+                frame >= 100 and channel == 8
+                for frame, channel, _, _ in self.synth.note_ons
+            )
+        )
+        self.renderer.configure_style_controls(
+            self.controls.update_track({"role": "drum", "solo": True})
+        )
+        self.renderer.render(1500, self.chord)
+        self.assertTrue(
+            all(
+                channel == 9
+                for frame, channel, _, _ in self.synth.note_ons
+                if frame >= 600
+            )
+        )
+
+    def test_tempo_change_retimes_queued_note_off(self) -> None:
+        self.renderer.render(100, self.chord)
+        self.renderer.set_tempo(60)
+        self.renderer.render(301, self.chord)
+        self.assertIn((400, 8, 36), self.synth.note_offs)
+
+    def test_unavailable_sections_are_rejected_before_state_changes(self) -> None:
+        renderer = ImportedStyleArrangementRenderer(
+            _style(),
+            DemoAudioConfig(),
+            "/configured/test.sf2",
+            engine_factory=lambda _config, _path: FakeSynth(),
+        )
+        with self.assertRaisesRegex(ValueError, "no variation 4"):
+            renderer.configure_style_controls(replace(self.controls, variation=4))
+        self.assertEqual(renderer.main_variation, 1)
+        renderer.close()
+
+    def test_timeline_returns_selected_section(self) -> None:
+        timeline = imported_style_timeline(expanded_style(), section="variation_2")
+        self.assertEqual(timeline["total_beats"], 4)
+        self.assertEqual(timeline["section"], "variation_2")
+        with self.assertRaises(ValueError):
+            imported_style_timeline(expanded_style(), section="intro_3")
+
+
+def test_variation_request_waits_for_full_fill_without_cutting_it() -> None:
+    from ostinato.styles.controls import StyleControls
+
+    synth = FakeSynth()
+    renderer = ImportedStyleArrangementRenderer(
+        expanded_style(),
+        DemoAudioConfig(tempo_bpm=120, sample_rate=1_000, chunk_frames=10),
+        "/test.sf2",
+        engine_factory=lambda _config, _path: synth,
+    )
+    chord = ChordState(0, ChordQuality.MAJOR, None, 1.0, ("test",), 0)
+    renderer.render(100, chord)
+    renderer.request_fill(1)
+    renderer.configure_style_controls(StyleControls(variation=2))
+    renderer.render(1001, chord)
+    assert renderer.main_variation == 1
+    assert (1000, 11, 65, 92) in synth.note_ons
+    renderer.render(900, chord)
+    assert renderer.main_variation == 2
+    assert (2000, 11, 69, 80) in synth.note_ons
+    renderer.close()
+
+
+def test_volume_scales_source_controller_and_survives_section_changes() -> None:
+    from ostinato.styles.controls import StyleControls
+    from ostinato.styles.models import ControlChangeEvent
+
+    style = expanded_style()
+    main = style.elements[0]
+    cv = main.chord_variations[0]
+    bass = cv.tracks[0]
+    bass = replace(bass, events=(ControlChangeEvent(0, 7, 80, 8), *bass.events))
+    style = replace(
+        style,
+        elements=(
+            replace(
+                main, chord_variations=(replace(cv, tracks=(bass, *cv.tracks[1:])),)
+            ),
+            *style.elements[1:],
+        ),
+    )
+    synth = FakeSynth()
+    renderer = ImportedStyleArrangementRenderer(
+        style,
+        DemoAudioConfig(tempo_bpm=120, sample_rate=1_000, chunk_frames=10),
+        "/test.sf2",
+        engine_factory=lambda _config, _path: synth,
+    )
+    controls = StyleControls().update_track({"role": "bass", "volume": 50})
+    renderer.configure_style_controls(controls)
+    chord = ChordState(0, ChordQuality.MAJOR, None, 1.0, ("test",), 0)
+    renderer.render(100, chord)
+    assert (0, 8, 7, 40) in synth.controls
+    renderer.configure_style_controls(replace(controls, variation=2))
+    assert (100, 8, 7, 40) in synth.controls
+    renderer.close()
+
+
+def test_tempo_following_uses_the_selected_main_variation_rhythm() -> None:
+    from ostinato.styles.live_audio import imported_style_rhythm_spans
+
+    style = expanded_style()
+    assert 4.0 not in imported_style_rhythm_spans(style, variation_number=1)
+    assert 4.0 in imported_style_rhythm_spans(style, variation_number=2)

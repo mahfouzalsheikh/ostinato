@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Import validated five-section exports from one catalogued KORG bank."""
+"""Import all available section exports from one catalogued KORG bank."""
 
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ def main() -> int:
             if midi_directory.is_dir()
             else set()
         )
-        if files != _EXPECTED_FILES:
+        if not _EXPECTED_FILES.issubset(files):
             print(
                 f"MISSING {index:03d} {name}: complete five-section export unavailable"
             )

@@ -267,11 +267,15 @@ def custom_style_timeline(style: CustomStyle) -> dict[str, Any]:
     return timeline
 
 
-def imported_style_timeline(style: Style) -> dict[str, Any]:
+def imported_style_timeline(
+    style: Style, *, section: str = "variation_1"
+) -> dict[str, Any]:
     """Describe the exact Variation 1 CV1 material used by live playback."""
 
     info = imported_style_playback_info(style)
-    variation = info.sections["main"]
+    if section not in info.sections:
+        raise ValueError(f"style has no {section}")
+    variation = info.sections[section]
     beats_per_bar = info.beats_per_bar
     total_beats = variation.length_ticks / style.ticks_per_beat
     phrase_bars = max(1, math.ceil(total_beats / beats_per_bar))
@@ -347,5 +351,8 @@ def imported_style_timeline(style: Style) -> dict[str, Any]:
         "bar_dynamics": [round(value / maximum * 100) for value in averages],
         "lanes": lanes,
         "imported": True,
-        "playback_policy": "Variation 1 CV1 · Ostinato chord adaptation",
+        "section": section,
+        "playback_policy": (
+            f"{section.replace('_', ' ').title()} CV1 · Ostinato chord adaptation"
+        ),
     }
